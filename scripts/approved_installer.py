@@ -84,8 +84,22 @@ def _verify_source(entry: dict, get_json=request_json) -> str:
         raise PromotionError(f"{entry['id']}: SKILL.md must be UTF-8") from None
     if "\r" in content or "\0" in content:
         raise PromotionError(f"{entry['id']}: unsupported CR/NUL bytes in SKILL.md")
-    if frontmatter(content).get("name") != entry["id"]:
+    fields = frontmatter(content)
+    lines = content.splitlines()
+    try:
+        header_end = next(i for i in range(1, min(len(lines), 100))
+                          if lines[i].strip() == "---")
+    except StopIteration:
+        raise PromotionError(f"{entry['id']}: malformed SKILL.md frontmatter") from None
+    for field in ("name", "description"):
+        if sum(line.startswith(field + ":") for line in lines[1:header_end]) != 1:
+            raise PromotionError(
+                f"{entry['id']}: ambiguous or missing frontmatter {field}"
+            )
+    if fields.get("name") != entry["id"]:
         raise PromotionError(f"{entry['id']}: SKILL.md frontmatter name does not match approval")
+    if not fields.get("description") or fields["description"] in ("|", ">"):
+        raise PromotionError(f"{entry['id']}: missing single-line description in frontmatter")
     return content
 
 
