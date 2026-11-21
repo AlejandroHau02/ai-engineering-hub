@@ -16,6 +16,7 @@ import sys
 from urllib.parse import urlsplit
 
 from skill_scout import parse_skill_url
+from path_safety import is_link_or_reparse
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "registry" / "approved-skills.json"
@@ -236,7 +237,7 @@ def _obstacle(home: Path, target: Path) -> str:
     """Conservatively flag existing destinations or symlinked parent paths."""
     current = target
     while current != home:
-        if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
+        if is_link_or_reparse(current):
             return "BLOCKED_SYMLINK"
         if current.exists() and current != target and not current.is_dir():
             return "BLOCKED_NON_DIRECTORY"
