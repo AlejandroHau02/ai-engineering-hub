@@ -227,6 +227,23 @@ class ApprovedPromotionTests(unittest.TestCase):
                 sync.build_plan(self.home, ("claude",), include_approved_skills=True)
         self.assertEqual((folder / "personal.txt").read_text(encoding="utf-8"), "personal")
 
+    def test_symlinked_skill_directory_rejected(self):
+        outside = self.home / "personal-folder"
+        outside.mkdir()
+        (outside / "SKILL.md").write_bytes(RAW)
+        link = self.home / ".claude/skills/third-party-demo"
+        link.parent.mkdir(parents=True)
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink creation is unavailable on this platform")
+        with patch.object(sync, "approved_candidates", return_value=[
+            (Path(".claude/skills/third-party-demo/SKILL.md"), RAW.decode())
+        ]):
+            with self.assertRaisesRegex(ValueError, "Symlink"):
+                sync.build_plan(self.home, ("claude",), include_approved_skills=True)
+        self.assertEqual((outside / "SKILL.md").read_bytes(), RAW)
+
     def test_empty_preexisting_skill_directory_blocks(self):
         folder = self.home / ".claude/skills/third-party-demo"
         folder.mkdir(parents=True)
