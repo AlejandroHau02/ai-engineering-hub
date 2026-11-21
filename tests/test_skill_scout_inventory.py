@@ -119,6 +119,21 @@ class RelatedFilesTests(unittest.TestCase):
                          {"remote-script-execution", "dependency-install"})
         self.assertTrue(all("/contents/other/" not in p for p in seen))
 
+    def test_extensionless_license_is_reported_as_reviewed_text(self):
+        data = "MIT License\\nExample\\n"
+        def get_json(path):
+            if "/git/trees/" in path:
+                return {"truncated": False, "tree": [
+                    blob("skills/demo/LICENSE", data),
+                ]}
+            if "/contents/skills/demo/LICENSE" in path:
+                return response(data)
+            raise AssertionError(path)
+        result = inspect_related("acme", "skills", SHA, "skills/demo/SKILL.md",
+                                 get_json, RISK_RULES)
+        self.assertEqual(result["inspected"][0]["path"], "skills/demo/LICENSE")
+        self.assertEqual(result["filesNotScanned"], 0)
+
     def test_skips_symlinks_and_unknown_binary(self):
         def get_json(path):
             if "/git/trees/" in path:
