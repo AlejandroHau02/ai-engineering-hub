@@ -16,7 +16,7 @@ Desde la raíz del checkout del Hub:
 python scripts/sync.py --target both --approved-skills
 ```
 
-`--approved-skills` es una opción explícita; por defecto hace **dry-run**. Prepara las skills propias del Hub como siempre y, si el manifiesto tiene entradas, verifica el contenido remoto de cada skill aprobada contra el commit y hashes registrados. Después comprueba los posibles destinos en `~/.claude/skills/` y `~/.agents/skills/`.
+`--approved-skills` es una opción explícita; por defecto hace **dry-run**. Prepara las skills propias del Hub como siempre y, si el manifiesto tiene entradas, verifica el contenido remoto de cada skill aprobada contra el commit y hashes registrados. Cada creación aprobada muestra su **SHA-256 verificado** en el plan para cotejarlo con el registro. Después comprueba los posibles destinos en `~/.claude/skills/` y `~/.agents/skills/`.
 
 Si la skill fue probada para Claude pero no para Codex (o viceversa), `--target both` se rechaza de forma conservadora. Selecciona solo un target con estado `tested`:
 
