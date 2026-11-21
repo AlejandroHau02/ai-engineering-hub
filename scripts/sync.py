@@ -121,9 +121,19 @@ def build_plan(
         for relative, approved_content in approved_candidates(targets):
             dest = home / relative
             ensure_safe(dest, home)
-            if dest.exists():
-                # Exact text match is safe and idempotent. Never overwrite an
-                # unknown or personally modified third-party skill.
+            if dest.parent.exists():
+                # A pre-existing skill directory is user-owned. Only allow
+                # idempotence for the exact, standalone SKILL.md and no extras.
+                if not dest.is_file():
+                    raise ValueError(
+                        f"Approved skill directory already exists: {dest.parent}; "
+                        "no files were written"
+                    )
+                if {entry.name for entry in dest.parent.iterdir()} != {"SKILL.md"}:
+                    raise ValueError(
+                        f"Approved skill directory contains other files: {dest.parent}; "
+                        "no files were written"
+                    )
                 if dest.read_bytes() != approved_content.encode("utf-8"):
                     raise ValueError(f"Approved skill conflict: {dest}; no files were written")
                 continue
