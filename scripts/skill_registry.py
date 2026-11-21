@@ -48,7 +48,10 @@ def _text(value: object, label: str, *, required: bool = True, max_length: int =
 
 def _https(value: object, label: str) -> str:
     value = _text(value, label, max_length=1024)
-    parts = urlsplit(value)
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        raise RegistryError(f"Invalid {label} URL") from None
     if (parts.scheme != "https" or not parts.hostname or parts.username
         or parts.password or any(ord(c) < 33 for c in value)):
         raise RegistryError(f"{label} requires an HTTPS URL without credentials")
@@ -112,7 +115,7 @@ def review_template(report: dict) -> dict:
     if not isinstance(skill, dict):
         raise RegistryError("Inspect report missing skill metadata")
     name = skill.get("name")
-    if not isinstance(name, str) or not ID_RE.fullmatch(name):
+    if not isinstance(name, str) or len(name) > 64 or not ID_RE.fullmatch(name):
         raise RegistryError("Skill name is not a safe registry identifier")
     if name in OWN_SKILLS:
         raise RegistryError("Skill name conflicts with a first-party Hub skill")
@@ -245,12 +248,17 @@ def promotion_plan(manifest: dict, home: Path, targets: tuple[str, ...]) -> dict
     for entry in entries:
         for target in targets:
             destination = home / TARGET_PATHS[target] / entry["id"] / "SKILL.md"
+            compatibility = entry["assessment"]["compatibility"][
+                "claudeCode" if target == "claude" else "codex"
+            ]["status"]
             changes.append({
                 "id": entry["id"], "target": target,
                 "destination": str(destination),
                 "contentSha256": entry["source"]["contentSha256"],
                 "sourceCommit": entry["source"]["commit"],
-                "status": _obstacle(home, destination),
+                "compatibility": compatibility,
+                "status": ("BLOCKED_UNSUPPORTED" if compatibility == "unsupported"
+                           else _obstacle(home, destination)),
                 "action": "PROPOSAL_ONLY",
             })
     return {
