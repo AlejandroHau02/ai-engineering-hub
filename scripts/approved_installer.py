@@ -94,10 +94,13 @@ def approved_candidates(targets: tuple[str, ...], manifest_path: Path = MANIFEST
     """Return relative destination and source content; never write or execute."""
     approved = validate_manifest(load_json(manifest_path))
     candidates: list[tuple[Path, str]] = []
+    # Validate the entire approval/compatibility matrix BEFORE any outbound
+    # request. A rejected later entry must not cause earlier source downloads.
+    for target in targets:
+        if target not in TARGET_PATHS:
+            raise PromotionError(f"Invalid target: {target}")
     for entry in approved:
         for target in targets:
-            if target not in TARGET_PATHS:
-                raise PromotionError(f"Invalid target: {target}")
             compat = entry["assessment"]["compatibility"][
                 "claudeCode" if target == "claude" else "codex"
             ]["status"]
@@ -106,6 +109,7 @@ def approved_candidates(targets: tuple[str, ...], manifest_path: Path = MANIFEST
                     f"{entry['id']}: target {target} is not approved as tested; "
                     "select a compatible --target before applying"
                 )
+    for entry in approved:
         content = _verify_source(entry, get_json)
         for target in targets:
             candidates.append((Path(TARGET_PATHS[target]) / entry["id"] / "SKILL.md", content))
