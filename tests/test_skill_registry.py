@@ -113,11 +113,11 @@ class ManifestTests(unittest.TestCase):
     def test_reject_unsupported_or_unverified_clients(self):
         for status in ("not-verified", "unknown"):
             item = approved()
-            item["assessment"]["codex"]["status"] = status
+            item["assessment"]["compatibility"]["codex"]["status"] = status
             with self.subTest(status=status), self.assertRaises(RegistryError):
                 validate_entry(item)
         item = approved()
-        item["assessment"]["claudeCode"]["status"] = "unsupported"
+        item["assessment"]["compatibility"]["claudeCode"]["status"] = "unsupported"
         with self.assertRaises(RegistryError):
             validate_entry(item)
 
