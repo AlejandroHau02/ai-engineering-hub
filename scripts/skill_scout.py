@@ -16,9 +16,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from skill_scout_inventory import InventoryError, locate_skills, inspect_related
+
 API = "https://api.github.com"
 USER_AGENT = "ai-engineering-hub-skill-scout/0.3"
-MAX_RESPONSE = 512 * 1024
+MAX_RESPONSE = 2 * 1024 * 1024
 MAX_SKILL_BYTES = 128 * 1024
 NAME_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?\Z")
 SHA_RE = re.compile(r"[0-9a-fA-F]{40}\Z")
@@ -141,7 +143,7 @@ def frontmatter(content: str) -> dict[str, str]:
     return result
 
 
-def inspect(url: str, get_json=request_json) -> dict:
+def inspect(url: str, get_json=request_json, include_related: bool = False) -> dict:
     owner, repo, commit, path = parse_skill_url(url)
     root = f"/repos/{quote(owner)}/{quote(repo)}"
     metadata = get_json(root)
@@ -176,7 +178,7 @@ def inspect(url: str, get_json=request_json) -> dict:
         findings.append({"type": "repository-archived", "lines": []})
     owner_data = metadata.get("owner")
     maintainer = owner_data.get("login") if isinstance(owner_data, dict) else None
-    return {
+    report = {
         "schemaVersion": 1, "operation": "inspect", "provider": "github",
         "source": {"url": url, "repository": f"{owner}/{repo}", "path": path,
                    "commit": commit, "blobSha": file_data.get("sha"),
@@ -193,6 +195,13 @@ def inspect(url: str, get_json=request_json) -> dict:
             "Untrusted instructions were never executed or installed.",
         ],
     }
+    if include_related:
+        inventory = inspect_related(owner, repo, commit, path, get_json, RISK_RULES)
+        report["relatedFiles"] = inventory
+        report["findings"].extend(inventory["findings"])
+        if inventory["status"] != "complete-text-scan":
+            report["notes"].append("Companion-file scan is partial; review unscanned files manually.")
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -201,12 +210,22 @@ def main(argv: list[str] | None = None) -> int:
     search = commands.add_parser("discover", help="Find unverified GitHub repository leads")
     search.add_argument("--query", required=True)
     search.add_argument("--limit", type=int, default=5)
+    locate = commands.add_parser("locate", help="Locate tracked SKILL.md files in a repository")
+    locate.add_argument("--repo", required=True, help="Public GitHub owner/repo")
+    locate.add_argument("--limit", type=int, default=20)
     check = commands.add_parser("inspect", help="Read and assess a pinned GitHub SKILL.md")
     check.add_argument("--url", required=True)
+    check.add_argument("--related", action="store_true",
+                       help="Also inventory and statically scan bounded companion files")
     args = parser.parse_args(argv)
     try:
-        report = discover(args.query, args.limit) if args.command == "discover" else inspect(args.url)
-    except ScoutError as exc:
+        if args.command == "discover":
+            report = discover(args.query, args.limit)
+        elif args.command == "locate":
+            report = locate_skills(args.repo, args.limit, request_json)
+        else:
+            report = inspect(args.url, include_related=args.related)
+    except (ScoutError, InventoryError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(report, indent=2, ensure_ascii=False))
