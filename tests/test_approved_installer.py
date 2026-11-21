@@ -244,6 +244,16 @@ class ApprovedPromotionTests(unittest.TestCase):
                 sync.build_plan(self.home, ("claude",), include_approved_skills=True)
         self.assertEqual((outside / "SKILL.md").read_bytes(), RAW)
 
+    def test_simulated_windows_junction_in_parent_is_blocked(self):
+        ancestor = self.home / ".claude/skills"
+        destination = ancestor / "third-party-demo/SKILL.md"
+        original = getattr(Path, "is_junction", lambda self: False)
+        def simulated_junction(path):
+            return path == ancestor or original(path)
+        with patch.object(Path, "is_junction", simulated_junction, create=True):
+            with self.assertRaisesRegex(ValueError, "junction"):
+                sync.ensure_safe(destination, self.home)
+
     def test_empty_preexisting_skill_directory_blocks(self):
         folder = self.home / ".claude/skills/third-party-demo"
         folder.mkdir(parents=True)
