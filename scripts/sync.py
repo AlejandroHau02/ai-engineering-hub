@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
 END = "<!-- ai-engineering-hub:end -->"
 SKILLS = ("architecture-review", "ux-ui", "backend-engineering", "code-review")
+BASELINES = ROOT / "registry" / "baselines" / "v0.1"
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class Change:
     path: Path
     content: str
     kind: str
+    expected: str | None = None
 
 
 def ensure_safe(path: Path, home: Path) -> None:
@@ -62,7 +64,7 @@ def merge_block(existing: str, block: str) -> str:
     return existing[:start] + block.rstrip("\n") + existing[end + len(END):]
 
 
-def build_plan(home: Path, targets: tuple[str, ...]) -> list[Change]:
+def build_plan(home: Path, targets: tuple[str, ...], upgrade_skills: bool = False) -> list[Change]:
     changes: list[Change] = []
     for target in targets:
         config = home / (".claude/CLAUDE.md" if target == "claude" else ".codex/AGENTS.md")
@@ -70,21 +72,48 @@ def build_plan(home: Path, targets: tuple[str, ...]) -> list[Change]:
         existing = config.read_text(encoding="utf-8") if config.exists() else ""
         updated = merge_block(existing, global_block(target))
         if updated != existing:
-            changes.append(Change(config, updated, "UPDATE" if config.exists() else "CREATE"))
+            changes.append(Change(config, updated, "UPDATE" if config.exists() else "CREATE", existing if config.exists() else None))
         root = home / (".claude/skills" if target == "claude" else ".agents/skills")
         for skill in SKILLS:
             dest = root / skill / "SKILL.md"
             ensure_safe(dest, home)
             new_content = (ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
             if dest.exists():
-                if dest.read_text(encoding="utf-8") != new_content:
-                    raise ValueError(f"Skill conflict: {dest} differs; no files were written")
+                existing_skill = dest.read_text(encoding="utf-8")
+                if existing_skill == new_content:
+                    continue
+                if not upgrade_skills:
+                    raise ValueError(
+                        f"Skill update available at {dest}; preview with --upgrade-skills "
+                        "(no files were written)"
+                    )
+                baseline = BASELINES / skill / "SKILL.md"
+                if not baseline.is_file() or existing_skill != baseline.read_text(encoding="utf-8"):
+                    raise ValueError(
+                        f"Unrecognized or locally modified skill: {dest}; "
+                        "manual review required (no files were written)"
+                    )
+                changes.append(Change(dest, new_content, "UPGRADE", existing_skill))
                 continue
             changes.append(Change(dest, new_content, "CREATE"))
     return changes
 
 
-def write_with_backup(change: Change) -> None:
+def verify_change(change: Change, home: Path) -> None:
+    """Fail closed if a destination changed since planning."""
+    ensure_safe(change.path, home)
+    if change.expected is None:
+        if change.path.exists():
+            raise ValueError(f"Destination appeared since planning: {change.path}")
+    elif (
+        not change.path.exists()
+        or change.path.read_text(encoding="utf-8") != change.expected
+    ):
+        raise ValueError(f"Destination changed since planning: {change.path}")
+
+
+def write_with_backup(change: Change, home: Path) -> None:
+    verify_change(change, home)
     destination = change.path
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp_path: Path | None = None
@@ -111,12 +140,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("both", "claude", "codex"), default="both")
     parser.add_argument("--apply", action="store_true", help="Write files explicitly")
+    parser.add_argument(
+        "--upgrade-skills", action="store_true",
+        help="Allow reviewed upgrades only when installed skill exactly matches v0.1 baseline",
+    )
     parser.add_argument("--home", type=Path, default=Path.home(), help="Override home for testing")
     args = parser.parse_args(argv)
     home = args.home.expanduser().resolve()
     targets = ("claude", "codex") if args.target == "both" else (args.target,)
     try:
-        changes = build_plan(home, targets)
+        changes = build_plan(home, targets, upgrade_skills=args.upgrade_skills)
         if not changes:
             print("NO CHANGES")
             return 0
@@ -124,8 +157,13 @@ def main(argv: list[str] | None = None) -> int:
             mode = "APPLY" if args.apply else "DRY-RUN"
             print(f"{mode} {change.kind} {change.path}")
         if args.apply:
+            # Preflight every target before any write. Concurrent changes still
+            # trigger a per-file recheck in write_with_backup; backups support
+            # recovery if a later operation fails.
             for change in changes:
-                write_with_backup(change)
+                verify_change(change, home)
+            for change in changes:
+                write_with_backup(change, home)
             print(f"Applied {len(changes)} file change(s).")
         else:
             print("Preview only; nothing changed. Use --apply after review.")
