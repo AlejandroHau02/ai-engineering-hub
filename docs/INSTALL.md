@@ -78,9 +78,17 @@ Se requiere `--apply` **además** de `--approved-skills` para instalar; solo des
 
 ## Recuperación
 
-Los archivos actualizados tienen respaldos `*.bak.<timestamp>` al lado del original. Puedes restaurar manualmente el respaldo apropiado tras inspeccionarlo. No borres reglas personales o directorios de skills que no sean del Hub.
+`--apply` prepara un registro persistente y copias de los originales antes de comenzar. Ante una excepción durante el lote, intenta revertirlo automáticamente. Los archivos actualizados conservan respaldos `*.bak.<timestamp>` después de un commit satisfactorio.
 
-La aplicación es segura por archivo, pero **no completamente transaccional** entre todos los archivos; si un error interrumpe el proceso, inspecciona el estado antes de reintentar.
+Si el proceso se interrumpe abruptamente, **no vuelvas a aplicar de inmediato**. Revisa el incidente y ejecuta:
+
+```powershell
+python scripts/sync.py --recover
+```
+
+Con `--home`, usa exactamente el mismo directorio que durante el intento anterior. El comando no requiere credenciales ni consulta GitHub; restaura únicamente archivos que siguen coincidiendo con el contenido previo/nuevo que consta en el journal. Si otro proceso alteró alguno, se bloquea y deja evidencia para revisión manual. No borres la carpeta temporal ni los respaldos sin inspección. Lee [recuperación de transacciones](TRANSACTION_RECOVERY.md).
+
+**Límite:** la aplicación no es atómica para todos los archivos al mismo tiempo; el journal necesita recuperación explícita tras interrupciones y las carreras TOCTOU no desaparecen completamente.
 
 ## Política de seguridad
 
