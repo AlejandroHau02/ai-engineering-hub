@@ -15,6 +15,7 @@ import tempfile
 
 from specialists import files_for_target
 from approved_installer import approved_candidates
+from path_safety import is_link_or_reparse
 
 ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
@@ -37,7 +38,7 @@ def ensure_safe(path: Path, home: Path) -> None:
         raise ValueError(f"Destination is outside home: {path}")
     current = path
     while current != home:
-        if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
+        if is_link_or_reparse(current):
             raise ValueError(f"Symlink or junction destination is not allowed: {current}")
         if current != path and current.exists() and not current.is_dir():
             raise ValueError(f"Parent is not a directory: {current}")
