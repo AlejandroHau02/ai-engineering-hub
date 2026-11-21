@@ -1,4 +1,4 @@
-# Instalación y upgrades del Hub (v0.2)
+# Instalación y upgrades del Hub (v0.2–v0.3)
 
 Requiere **Python 3.10+**, un checkout local del repositorio y Claude Code o Codex instalados independientemente.
 
