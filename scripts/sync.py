@@ -37,8 +37,8 @@ def ensure_safe(path: Path, home: Path) -> None:
         raise ValueError(f"Destination is outside home: {path}")
     current = path
     while current != home:
-        if current.is_symlink():
-            raise ValueError(f"Symlink destination is not allowed: {current}")
+        if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
+            raise ValueError(f"Symlink or junction destination is not allowed: {current}")
         if current != path and current.exists() and not current.is_dir():
             raise ValueError(f"Parent is not a directory: {current}")
         current = current.parent
