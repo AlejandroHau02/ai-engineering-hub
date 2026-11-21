@@ -24,7 +24,7 @@ Update proposals should include a change diff, compatibility results, and explic
 
 ## Skill Scout v0.3 (prototipo)
 
-`scripts/skill_scout.py` puede descubrir **repositorios candidatos**, localizar rutas `SKILL.md` existentes en un commit y revisar de forma estática el archivo junto con recursos relacionados limitados. Su informe no se registra aquí ni confiere confianza, compatibilidad o aprobación. El instalador sigue sin aceptar contenido de terceros. Véanse [la guía](../docs/SKILL_SCOUT.md) y [ADR-0003](../docs/ADR-0003.md).
+`scripts/skill_scout.py` puede descubrir **repositorios candidatos**, localizar rutas `SKILL.md` existentes en un commit y revisar de forma estática el archivo junto con recursos relacionados limitados. Su informe no se registra aquí ni confiere confianza, compatibilidad o aprobación. El instalador estándar continúa sin usar contenido de terceros; desde PR #10 existe una ruta de instalación verificada únicamente mediante la opción explícita `--approved-skills`. Véanse [la guía](../docs/SKILL_SCOUT.md) y [ADR-0003](../docs/ADR-0003.md).
 
 ## Manifiesto de aprobaciones (v0.3 en desarrollo)
 
