@@ -29,3 +29,7 @@ Update proposals should include a change diff, compatibility results, and explic
 ## Manifiesto de aprobaciones (v0.3 en desarrollo)
 
 `approved-skills.json` es un manifiesto **vacío por defecto**. `scripts/skill_registry.py` genera borradores de ficha, valida los campos requeridos para un registro aprobado y ofrece simulaciones de rutas. El estado `approved` es una declaración humana versionada que debe revisarse, **no** confianza automática ni autorización para instalar. El instalador existente no lee el manifiesto. Consulta [la guía](../docs/SKILL_REGISTRY.md) y [ADR-0004](../docs/ADR-0004.md).
+
+## Promoción aprobada (PR #10; experimental)
+
+`scripts/sync.py --approved-skills` habilita un plan opcional de instalación controlada para una **skill autónoma de un único `SKILL.md`**. Comprueba la fuente GitHub fijada a commit y hashes aprobados antes de reutilizar el preflight y la escritura explícita del instalador. El manifiesto continúa vacío; los bundles quedan bloqueados. Véanse [ADR-0005](../docs/ADR-0005.md) y [la guía](../docs/APPROVED_INSTALL.md). La promoción nunca ejecuta el contenido de la skill.
