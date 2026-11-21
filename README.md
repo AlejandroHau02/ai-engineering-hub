@@ -2,7 +2,7 @@
 
 **Entorno personal de ingeniería AI-first para Claude Code y Codex.**
 
-Estado: **v0.1 instalada; v0.2 en revisión**. Este repositorio es público y está separado de cualquier empleador.
+Estado: **v0.2 consolidada en `main`**, con cuatro skills propias y cuatro especialistas opcionales para cada cliente. Este repositorio es público y está separado de cualquier empleador.
 
 ## Objetivo
 
@@ -13,6 +13,7 @@ Usar agentes de programación que inspeccionen el contexto, cuestionen decisione
 - [Engineering Core](core/ENGINEERING_CORE.md): principios globales de ingeniería.
 - [Adaptadores](adapters/): instrucciones globales específicas para Claude Code y Codex.
 - [Skills](skills/): arquitectura, UX/UI, backend y revisión de código.
+- [Especialistas](specialists/README.md): catálogo común y agentes nativos de Claude/Codex; instalación global opcional con `--specialists`.
 - [Instalador](scripts/sync.py): Python estándar, simulación por defecto, aplicación opcional con respaldo.
 - [Pruebas](tests/test_sync.py) y CI para validar instalación segura.
 - [Evaluaciones](evals/README.md) de criterio, UX/UI, implementación y revisión cruzada; [rúbrica](evals/RUBRIC.md) y [calculadora local](scripts/score_evals.py).
@@ -39,9 +40,9 @@ Requisitos: Python 3.10+; Claude Code o Codex instalados por separado.
 
 En Windows también puedes utilizar `py -3`. Lee [la guía de instalación](docs/INSTALL.md) para conflictos, respaldos y rollback.
 
-## Vista previa v0.2 — actualizar skills existentes
+## Actualizar skills existentes de v0.1
 
-La rama v0.2 añade controles de calidad respaldados por las evaluaciones y permite **proponer** upgrades de skills v0.1 con comprobación de contenido y respaldos. Desde esa rama:
+La v0.2 incluye controles de calidad respaldados por las evaluaciones y permite **proponer** upgrades seguros de skills v0.1 con comprobación de contenido y respaldos. Desde la raíz del repositorio:
 
 ```powershell
 python scripts/sync.py --target both --upgrade-skills
@@ -49,7 +50,15 @@ python scripts/sync.py --target both --upgrade-skills
 
 Esto **no escribe nada**. Para aplicar un upgrade después de revisarlo, se requiere además `--apply`. El script rechaza skills personalizadas y archivos sin baseline conocido. Consulta [ADR-0002](docs/ADR-0002.md) y [la guía de instalación](docs/INSTALL.md).
 
-La v0.2 es una propuesta sobre la rama v0.1, aún no fusionada; no significa que las skills globales locales se hayan actualizado. La [interfaz local de gestión](https://github.com/AlejandroHau02/ai-engineering-hub/issues/4) queda planeada para una etapa posterior.
+La instalación global de v0.2 y los especialistas se validó en Windows, y el CI se ejecuta en Windows y Linux. La [interfaz local de gestión](https://github.com/AlejandroHau02/ai-engineering-hub/issues/4) queda planeada para una etapa posterior.
+
+## Especialistas globales opcionales
+
+```powershell
+python scripts/sync.py --target both --specialists
+```
+
+El primer paso es un dry-run; añade definiciones globales a `~/.claude/agents/` y `~/.codex/agents/` solo con `--apply`. Los especialistas se limitan a revisión y asesoría; no reemplazan al agente principal. Consulta [instalación, límites de permisos y ejemplos](specialists/README.md). En Codex las restricciones de solo lectura son instrucciones, no un sandbox independiente.
 
 ## Principios de seguridad
 
@@ -60,7 +69,7 @@ El instalador no descarga nada ni ejecuta código de terceros. Solo actualiza sk
 ## Roadmap
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
-- **v0.2 (en desarrollo):** upgrades verificados de skills instaladas, mejores controles de calidad y evaluación de permisos internos.
+- **v0.2:** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
 - **v0.3:** descubrimiento de actualizaciones, evaluaciones, y aprobación antes de promover cambios.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
