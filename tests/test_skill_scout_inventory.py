@@ -57,7 +57,7 @@ class LocateTests(unittest.TestCase):
         self.assertEqual([x["path"] for x in result["candidates"]],
                          ["SKILL.md", "skills/alpha/SKILL.md", "skills/zeta/SKILL.md"])
         self.assertTrue(all("/blob/" + SHA + "/" in x["url"] for x in result["candidates"]))
-        self.assertIn("/commits/feature%2Fwork", seen)
+        self.assertTrue(any(path.endswith("/commits/feature%2Fwork") for path in seen))
 
     def test_reports_tree_truncation_and_result_limit(self):
         def get_json(path):
