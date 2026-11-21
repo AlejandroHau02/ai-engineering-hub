@@ -90,11 +90,23 @@ python scripts/skill_registry.py plan --target both
 
 **No se instala ninguna skill externa ni existe `--apply`** en el gestor. El plan marca potenciales destinos y conflictos; las fichas requieren licencia, riesgos, compatibilidad y aprobación revisados manualmente. Consulta [la guía](docs/SKILL_REGISTRY.md) y [ADR-0004](docs/ADR-0004.md).
 
+## Instalación verificada de skills aprobadas (PR #10, experimental)
+
+La instalación opcional de skills externas aprobadas utiliza el `sync.py` existente, con **dry-run predeterminado**. El manifiesto continúa vacío; no se instala ninguna skill de terceros por defecto.
+
+```powershell
+python scripts/sync.py --target both --approved-skills
+# Aplicar solo después de revisar y aprobar el plan:
+python scripts/sync.py --target both --approved-skills --apply
+```
+
+Primero se comprueba licencia/aprobación registrada, compatibilidad de cada cliente, el SHA del commit, blob y SHA-256 de la fuente. Este incremento **solo soporta skills autónomas de un único `SKILL.md`**; se rechazan dependencias dentro de su directorio. Consulta [la guía](docs/APPROVED_INSTALL.md) y [ADR-0005](docs/ADR-0005.md).
+
 ## Roadmap
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
 - **v0.2:** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
-- **v0.3 (en desarrollo):** inspección externa, fichas y manifiesto de aprobación; la copia, instalación y fuentes adicionales permanecen pendientes.
+- **v0.3 (en desarrollo):** inspección, registro de aprobaciones y primer instalador opcional para skills de un solo archivo; bundles y fuentes adicionales siguen pendientes.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
 
