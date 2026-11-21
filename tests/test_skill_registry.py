@@ -121,6 +121,18 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaises(RegistryError):
             validate_entry(item)
 
+    def test_reject_malformed_https_evidence_without_traceback(self):
+        item = approved()
+        item["approval"]["evidence"] = "https://[invalid-ipv6"
+        with self.assertRaises(RegistryError):
+            validate_entry(item)
+
+    def test_reject_overlong_template_identifier(self):
+        report = inspected()
+        report["skill"]["name"] = "a" * 65
+        with self.assertRaises(RegistryError):
+            review_template(report)
+
     def test_reject_invalid_approval(self):
         for field, value in [("status", "pending"), ("approvedBy", ""),
                              ("approvedAt", "tomorrow"), ("approvedAt", "2026-02-30"),
@@ -173,10 +185,26 @@ class PreviewTests(unittest.TestCase):
         plan = promotion_plan({"schemaVersion": 1, "skills": [approved()]},
                               self.home, ("claude", "codex"))
         self.assertEqual(len(plan["changes"]), 2)
-        self.assertEqual({x["status"] for x in plan["changes"]}, {"PROPOSED_NEW"})
+        self.assertEqual({x["target"]: x["status"] for x in plan["changes"]},
+                         {"claude": "PROPOSED_NEW", "codex": "BLOCKED_UNSUPPORTED"})
         self.assertTrue(all(x["action"] == "PROPOSAL_ONLY" for x in plan["changes"]))
         self.assertFalse((self.home / ".claude").exists())
         self.assertFalse((self.home / ".agents").exists())
+
+    def test_unsupported_target_never_proposed_even_if_destination_is_empty(self):
+        plan = promotion_plan({"schemaVersion": 1, "skills": [approved()]},
+                              self.home, ("codex",))
+        self.assertEqual(plan["changes"][0]["status"], "BLOCKED_UNSUPPORTED")
+        self.assertEqual(plan["changes"][0]["compatibility"], "unsupported")
+        self.assertFalse((self.home / ".agents").exists())
+
+    def test_both_tested_targets_may_be_proposed(self):
+        item = approved()
+        item["assessment"]["compatibility"]["codex"]["status"] = "tested"
+        plan = promotion_plan({"schemaVersion": 1, "skills": [item]},
+                              self.home, ("claude", "codex"))
+        self.assertEqual([x["status"] for x in plan["changes"]],
+                         ["PROPOSED_NEW", "PROPOSED_NEW"])
 
     def test_existing_custom_skill_blocks_preview(self):
         path = self.home / ".claude/skills/demo/SKILL.md"
