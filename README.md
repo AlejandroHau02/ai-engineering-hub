@@ -15,6 +15,7 @@ Usar agentes de programación que inspeccionen el contexto, cuestionen decisione
 - [Skills](skills/): arquitectura, UX/UI, backend y revisión de código.
 - [Instalador](scripts/sync.py): Python estándar, simulación por defecto, aplicación opcional con respaldo.
 - [Pruebas](tests/test_sync.py) y CI para validar instalación segura.
+- [Evaluaciones](evals/README.md) de criterio, UX/UI, implementación y revisión cruzada; [rúbrica](evals/RUBRIC.md) y [calculadora local](scripts/score_evals.py).
 - [Registro de skills](registry/README.md): diseño del proceso de revisión de capacidades externas (sin instalaciones automáticas).
 
 ## Inicio rápido
