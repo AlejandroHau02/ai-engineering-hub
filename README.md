@@ -62,7 +62,7 @@ El primer paso es un dry-run; añade definiciones globales a `~/.claude/agents/`
 
 ## Principios de seguridad
 
-El instalador no descarga nada ni ejecuta código de terceros. Solo actualiza skills v0.1 reconocidas cuando lo autorizas mediante las opciones de upgrade y aplicación; nunca sobreescribe personalizaciones desconocidas. Las instrucciones personales fuera del bloque gestionado se conservan y los cambios se respaldan.
+El instalador no ejecuta código de terceros. En el flujo normal no descarga skills; **solo con `--approved-skills`** consulta archivos aprobados de GitHub para verificar su integridad antes de proponer cambios. Solo actualiza skills v0.1 reconocidas cuando lo autorizas mediante las opciones de upgrade y aplicación; nunca sobreescribe personalizaciones desconocidas. Las instrucciones personales fuera del bloque gestionado se conservan y los cambios se respaldan.
 
 **No publiques aquí claves, información de clientes, código propietario, logs ni contexto privado de proyectos.**
 
@@ -100,7 +100,7 @@ python scripts/sync.py --target both --approved-skills
 python scripts/sync.py --target both --approved-skills --apply
 ```
 
-Primero se comprueba licencia/aprobación registrada, compatibilidad de cada cliente, el SHA del commit, blob y SHA-256 de la fuente. Este incremento **solo soporta skills autónomas de un único `SKILL.md`**; se rechazan dependencias dentro de su directorio. Consulta [la guía](docs/APPROVED_INSTALL.md) y [ADR-0005](docs/ADR-0005.md).
+Primero se comprueba el estado declarado de licencia/aprobación en el manifiesto (que debe haber sido revisado manualmente), compatibilidad de cada cliente, el SHA del commit, blob y SHA-256 de la fuente. Este incremento **solo soporta skills autónomas de un único `SKILL.md`**; se rechazan dependencias dentro de su directorio. Consulta [la guía](docs/APPROVED_INSTALL.md) y [ADR-0005](docs/ADR-0005.md).
 
 ## Roadmap
 
