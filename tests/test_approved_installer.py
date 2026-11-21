@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -270,7 +271,9 @@ class ApprovedPromotionTests(unittest.TestCase):
         ]):
             with patch.object(sys, "argv", ["sync.py", "--target", "claude", "--home",
                                             str(self.home), "--approved-skills"]):
-                self.assertEqual(sync.main(), 0)
+                with patch.object(sys, "stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(sync.main(), 0)
+                self.assertIn("sha256=" + hashlib.sha256(RAW).hexdigest(), output.getvalue())
             self.assertFalse(destination.exists())
             with patch.object(sys, "argv", ["sync.py", "--target", "claude", "--home",
                                             str(self.home), "--approved-skills", "--apply"]):
