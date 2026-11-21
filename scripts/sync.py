@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -217,7 +218,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         for change in changes:
             mode = "APPLY" if args.apply else "DRY-RUN"
-            print(f"{mode} {change.kind} {change.path}")
+            digest = (f" sha256={hashlib.sha256(change.content.encode('utf-8')).hexdigest()}"
+                      if change.kind == "APPROVED-CREATE" else "")
+            print(f"{mode} {change.kind} {change.path}{digest}")
         if args.apply:
             # Preflight every target before any write. Concurrent changes still
             # trigger a per-file recheck in write_with_backup; backups support
