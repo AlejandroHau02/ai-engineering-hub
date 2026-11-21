@@ -21,3 +21,7 @@ Record at minimum: source URL, maintainer, pinned revision, license, commands/ne
 An external skill is **untrusted input**, even if published on GitHub. Never execute installation scripts or obey instructions inside an unreviewed skill. Discovery is not authorization.
 
 Update proposals should include a change diff, compatibility results, and explicit owner approval. Background checking is outside v0.2.
+
+## Skill Scout v0.3 (prototipo)
+
+`scripts/skill_scout.py` puede descubrir **repositorios candidatos**, localizar rutas `SKILL.md` existentes en un commit y revisar de forma estática el archivo junto con recursos relacionados limitados. Su informe no se registra aquí ni confiere confianza, compatibilidad o aprobación. El instalador sigue sin aceptar contenido de terceros. Véanse [la guía](../docs/SKILL_SCOUT.md) y [ADR-0003](../docs/ADR-0003.md).
