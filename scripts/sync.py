@@ -17,6 +17,7 @@ import tempfile
 from specialists import files_for_target
 from approved_installer import approved_candidates
 from path_safety import is_link_or_reparse
+from transaction import TransactionError, WORK_DIR, apply_transaction, recover
 
 ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
@@ -156,7 +157,7 @@ def verify_change(change: Change, home: Path) -> None:
         raise ValueError(f"Destination changed since planning: {change.path}")
 
 
-def write_with_backup(change: Change, home: Path) -> None:
+def write_with_backup(change: Change, home: Path, create_backup: bool = True) -> None:
     verify_change(change, home)
     destination = change.path
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -173,10 +174,11 @@ def write_with_backup(change: Change, home: Path) -> None:
             temp_path = Path(out.name)
         if destination.exists():
             os.chmod(temp_path, stat.S_IMODE(destination.stat().st_mode))
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-            backup = destination.with_name(destination.name + ".bak." + timestamp)
-            shutil.copy2(destination, backup)
-            print(f"BACKUP {backup}")
+            if create_backup:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                backup = destination.with_name(destination.name + ".bak." + timestamp)
+                shutil.copy2(destination, backup)
+                print(f"BACKUP {backup}")
         # Detect changes that occurred while staging the temporary file.
         # This narrows, but does not eliminate, the cross-platform TOCTOU window.
         verify_change(change, home)
@@ -189,7 +191,9 @@ def write_with_backup(change: Change, home: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("both", "claude", "codex"), default="both")
-    parser.add_argument("--apply", action="store_true", help="Write files explicitly")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--apply", action="store_true", help="Write files explicitly")
+    action.add_argument("--recover", action="store_true", help="Explicitly recover interrupted install")
     parser.add_argument(
         "--specialists", action="store_true",
         help="Include trusted first-party specialist definitions (dry-run unless --apply)",
@@ -207,6 +211,14 @@ def main(argv: list[str] | None = None) -> int:
     home = args.home.expanduser().resolve()
     targets = ("claude", "codex") if args.target == "both" else (args.target,)
     try:
+        if args.recover:
+            print("RECOVERED" if recover(home, ensure_safe) else "NO PENDING TRANSACTION")
+            return 0
+        if (home / WORK_DIR).exists() or is_link_or_reparse(home / WORK_DIR):
+            raise TransactionError(
+                "Unfinished installation transaction; inspect and run sync.py --recover "
+                "before planning new changes"
+            )
         changes = build_plan(
             home, targets,
             upgrade_skills=args.upgrade_skills,
@@ -222,14 +234,8 @@ def main(argv: list[str] | None = None) -> int:
                       if change.kind == "APPROVED-CREATE" else "")
             print(f"{mode} {change.kind} {change.path}{digest}")
         if args.apply:
-            # Preflight every target before any write. Concurrent changes still
-            # trigger a per-file recheck in write_with_backup; backups support
-            # recovery if a later operation fails.
-            for change in changes:
-                verify_change(change, home)
-            for change in changes:
-                write_with_backup(change, home)
-            print(f"Applied {len(changes)} file change(s).")
+            apply_transaction(changes, home, verify_change, write_with_backup, ensure_safe)
+            print(f"Applied {len(changes)} file change(s) transactionally.")
         else:
             print("Preview only; nothing changed. Use --apply after review.")
         return 0
