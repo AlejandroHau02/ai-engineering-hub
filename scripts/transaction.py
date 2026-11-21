@@ -128,6 +128,8 @@ def _read_journal(directory: Path, home: Path, ensure_safe) -> dict:
               or not backup.startswith(Path(rel).name + ".bak.")
               or type(mode) is not int or not 0 <= mode <= 0o7777):
             raise TransactionError("Invalid original file metadata")
+    if any(not isinstance(name, str) for name in data["createdDirs"]):
+        raise TransactionError("Invalid created directory record")
     if len(data["createdDirs"]) != len(set(data["createdDirs"])):
         raise TransactionError("Duplicate directory records")
     for rel in data["createdDirs"]:
