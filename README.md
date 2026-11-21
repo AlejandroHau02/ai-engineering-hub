@@ -66,11 +66,22 @@ El instalador no descarga nada ni ejecuta código de terceros. Solo actualiza sk
 
 **No publiques aquí claves, información de clientes, código propietario, logs ni contexto privado de proyectos.**
 
+## Skill Scout (v0.3, prototipo en desarrollo)
+
+Una herramienta de consulta de solo lectura que busca **repositorios candidatos** y analiza un `SKILL.md` externo fijado a un commit, sin instalarlo:
+
+```powershell
+python scripts/skill_scout.py discover --query "agent skills" --limit 5
+python scripts/skill_scout.py inspect --url "https://github.com/owner/repo/blob/<commit-sha-40-caracteres>/skills/example/SKILL.md"
+```
+
+Devuelve JSON con procedencia, hashes y señales de riesgo. **Todos los resultados requieren revisión humana.** La búsqueda no verifica skills individuales, la inspección estática no certifica seguridad y la compatibilidad con Claude/Codex queda pendiente de pruebas. No existe promoción automática al instalador. Consulta [la guía](docs/SKILL_SCOUT.md) y [ADR-0003](docs/ADR-0003.md).
+
 ## Roadmap
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
 - **v0.2:** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
-- **v0.3:** descubrimiento de actualizaciones, evaluaciones, y aprobación antes de promover cambios.
+- **v0.3 (en desarrollo):** primera inspección de skills externas desde GitHub; futuras fuentes, evaluaciones de compatibilidad y aprobación antes de promover cambios.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
 
