@@ -37,7 +37,7 @@ python scripts/skill_registry.py plan --target both
 
 El manifiesto `registry/approved-skills.json` está vacío por diseño. Su validación debe reportar cero skills aprobadas y el plan, cero cambios. Puedes usar `--manifest ruta.json` con copias de prueba y `--home ruta_absoluta` para evaluar conflictos en un directorio alternativo.
 
-La simulación marca `PROPOSED_NEW`, `BLOCKED_UNSUPPORTED`, `BLOCKED_EXISTING`, `BLOCKED_SYMLINK` o `BLOCKED_NON_DIRECTORY` según compatibilidad y estado de los destinos; **nunca escribe**. Un cliente declarado `unsupported` jamás se ofrece como destino instalable. No equivale al preflight del futuro instalador y los resultados pueden quedar obsoletos si cambia el sistema de archivos.
+La simulación marca `PROPOSED_NEW`, `BLOCKED_UNSUPPORTED`, `BLOCKED_EXISTING`, `BLOCKED_EXISTING_DIRECTORY`, `BLOCKED_EXTRA_FILES`, `BLOCKED_SYMLINK` o `BLOCKED_NON_DIRECTORY` según compatibilidad y estado de los destinos; **nunca escribe**. Un cliente declarado `unsupported` jamás se ofrece como destino instalable. No equivale al preflight del futuro instalador y los resultados pueden quedar obsoletos si cambia el sistema de archivos.
 
 ## 4. Límites
 
