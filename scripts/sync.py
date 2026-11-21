@@ -158,6 +158,9 @@ def write_with_backup(change: Change, home: Path) -> None:
     verify_change(change, home)
     destination = change.path
     destination.parent.mkdir(parents=True, exist_ok=True)
+    # Recheck newly created parent paths: a symlink/non-directory introduced
+    # since the plan or first preflight must not be used for the temp file.
+    verify_change(change, home)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -172,6 +175,9 @@ def write_with_backup(change: Change, home: Path) -> None:
             backup = destination.with_name(destination.name + ".bak." + timestamp)
             shutil.copy2(destination, backup)
             print(f"BACKUP {backup}")
+        # Detect changes that occurred while staging the temporary file.
+        # This narrows, but does not eliminate, the cross-platform TOCTOU window.
+        verify_change(change, home)
         os.replace(temp_path, destination)
     finally:
         if temp_path is not None and temp_path.exists():
