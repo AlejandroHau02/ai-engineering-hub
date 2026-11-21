@@ -38,6 +38,25 @@ Sin `--upgrade-skills`, el instalador **rechaza** sobrescribir una skill existen
 
 Las instrucciones fuera del bloque `<!-- ai-engineering-hub:start -->` / `<!-- ai-engineering-hub:end -->` se conservan. Las modificaciones **dentro** de ese bloque pertenecen al Hub y pueden ser reemplazadas: revisa el plan y los respaldos antes de aplicar.
 
+## Añadir especialistas globales (opcional)
+
+Tras revisar la rama de especialistas, inicia una **simulación sin escritura**:
+
+```powershell
+python scripts/sync.py --target both --specialists
+```
+
+En un equipo con v0.2 ya sincronizada, deben aparecer cuatro agentes nuevos de Claude Code y cuatro de Codex, además de actualizaciones de las instrucciones globales del Hub. Si los archivos gestionados son los esperados y no existen conflictos, la instalación requiere la autorización explícita:
+
+```powershell
+python scripts/sync.py --target both --specialists --apply
+python scripts/sync.py --target both --specialists
+```
+
+La última ejecución debe responder `NO CHANGES`. Un agente existente con contenido diferente bloquea el proceso sin sobrescribirlo. Los cambios en configuraciones globales se respaldan. Los especialistas se instalan en `~/.claude/agents/` y `~/.codex/agents/`. No es necesario añadir archivos en cada proyecto.
+
+**Límite de seguridad:** los subagentes de Codex heredan los permisos de la sesión principal y su instrucción de no editar no equivale a un sandbox de lectura. Lee [especialistas y alcance](../specialists/README.md) antes de delegar tareas sensibles.
+
 ## Simulaciones y pruebas aisladas
 
 ```powershell
