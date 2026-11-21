@@ -236,7 +236,7 @@ def _obstacle(home: Path, target: Path) -> str:
     """Conservatively flag existing destinations or symlinked parent paths."""
     current = target
     while current != home:
-        if current.is_symlink():
+        if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
             return "BLOCKED_SYMLINK"
         if current.exists() and current != target and not current.is_dir():
             return "BLOCKED_NON_DIRECTORY"
