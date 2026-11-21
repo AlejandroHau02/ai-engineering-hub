@@ -171,7 +171,7 @@ def _new_dirs(path: Path, home: Path) -> list[str]:
 
 def _backups(data: dict, directory: Path, home: Path, ensure_safe) -> None:
     """Preserve old versions in conventional .bak.* paths on successful apply."""
-    for item in data["entries"]:
+    for index, item in enumerate(data["entries"]):
         if item["snapshot"] is None:
             continue
         dest = home / Path(item["path"])
@@ -179,15 +179,21 @@ def _backups(data: dict, directory: Path, home: Path, ensure_safe) -> None:
         ensure_safe(backup, home)
         if backup.exists():
             raise TransactionError(f"Backup path already exists: {backup}")
-        original = (directory / item["snapshot"]).read_bytes()
+        snapshot = directory / item["snapshot"]
+        original = snapshot.read_bytes()
         if _sha(original) != item["oldSha256"]:
             raise TransactionError("Snapshot hash changed before final backup")
-        # Exclusive creation protects existing user files from being replaced.
-        with backup.open("xb") as target:
-            target.write(original)
-            target.flush()
-            os.fsync(target.fileno())
-        os.chmod(backup, item["originalMode"])
+        # Write a complete, separate copy in the workspace, then publish it
+        # atomically with an EXCLUSIVE hardlink. An interruption cannot leave
+        # a partially written final .bak file; the original snapshot stays
+        # separate and available for rollback.
+        prepared = directory / f"backup-ready-{index:04d}.bin"
+        with prepared.open("xb") as out:
+            out.write(original)
+            out.flush()
+            os.fsync(out.fileno())
+        os.chmod(prepared, item["originalMode"])
+        os.link(prepared, backup)
         print(f"BACKUP {backup}")
 
 
@@ -344,6 +350,12 @@ def apply_transaction(changes, home: Path, verify_change, write_change, ensure_s
         for change in changes:
             verify_change(change, home)
             write_change(change, home, create_backup=False)
+        # Verify all final bytes before creating backups or marking committed.
+        for item in journal["entries"]:
+            destination = home / Path(item["path"])
+            ensure_safe(destination, home)
+            if not destination.is_file() or _sha(destination.read_bytes()) != item["newSha256"]:
+                raise TransactionError(f"Post-write integrity mismatch: {destination}")
         _backups(journal, directory, home, ensure_safe)
         journal["state"] = "committed"
         _save_journal(directory, journal)
