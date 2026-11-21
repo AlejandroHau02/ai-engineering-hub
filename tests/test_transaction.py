@@ -165,6 +165,16 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(sync.main(["--recover", "--home", str(self.home)]), 1)
         self.assertEqual(config.read_bytes(), b"updated\n")
 
+    def test_malformed_directory_record_is_rejected_without_traceback(self):
+        config = self.setup_interrupted()
+        journal = self.workspace() / transaction.JOURNAL
+        state = json.loads(journal.read_text())
+        state["createdDirs"] = [{"invalid": "object"}]
+        journal.write_text(json.dumps(state))
+        self.assertEqual(sync.main(["--recover", "--home", str(self.home)]), 1)
+        self.assertEqual(config.read_bytes(), b"updated\n")
+        self.assertTrue(self.workspace().exists())
+
     def test_forged_snapshot_filename_is_rejected(self):
         config = self.setup_interrupted()
         journal = self.workspace() / transaction.JOURNAL
