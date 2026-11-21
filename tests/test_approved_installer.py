@@ -231,7 +231,7 @@ class ApprovedPromotionTests(unittest.TestCase):
                                             str(self.home), "--approved-skills", "--apply"]):
                 self.assertEqual(sync.main(), 0)
             self.assertEqual(destination.read_bytes(), RAW)
-            self.assertEqual(sync.build_plan(self.home, ("claude"), include_approved_skills=True), [])
+            self.assertEqual(sync.build_plan(self.home, ("claude",), include_approved_skills=True), [])
 
     def test_all_targets_checked_before_any_fetch(self):
         item = entry()
