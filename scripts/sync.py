@@ -14,6 +14,7 @@ import sys
 import tempfile
 
 from specialists import files_for_target
+from approved_installer import approved_candidates
 
 ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
@@ -69,6 +70,7 @@ def merge_block(existing: str, block: str) -> str:
 def build_plan(
     home: Path, targets: tuple[str, ...], upgrade_skills: bool = False,
     include_specialists: bool = False,
+    include_approved_skills: bool = False,
 ) -> list[Change]:
     changes: list[Change] = []
     for target in targets:
@@ -113,6 +115,19 @@ def build_plan(
                         )
                     continue
                 changes.append(Change(agent_dest, agent_content, "CREATE"))
+    if include_approved_skills:
+        # Fetch and verify ALL approved sources before any local write; the
+        # manifest remains empty until explicitly reviewed and approved.
+        for relative, approved_content in approved_candidates(targets):
+            dest = home / relative
+            ensure_safe(dest, home)
+            if dest.exists():
+                # Exact text match is safe and idempotent. Never overwrite an
+                # unknown or personally modified third-party skill.
+                if dest.read_bytes() != approved_content.encode("utf-8"):
+                    raise ValueError(f"Approved skill conflict: {dest}; no files were written")
+                continue
+            changes.append(Change(dest, approved_content, "APPROVED-CREATE"))
     return changes
 
 
@@ -165,6 +180,10 @@ def main(argv: list[str] | None = None) -> int:
         "--upgrade-skills", action="store_true",
         help="Allow reviewed upgrades only when installed skill exactly matches v0.1 baseline",
     )
+    parser.add_argument(
+        "--approved-skills", action="store_true",
+        help="Include manually approved standalone third-party skills; dry-run unless --apply",
+    )
     parser.add_argument("--home", type=Path, default=Path.home(), help="Override home for testing")
     args = parser.parse_args(argv)
     home = args.home.expanduser().resolve()
@@ -174,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
             home, targets,
             upgrade_skills=args.upgrade_skills,
             include_specialists=args.specialists,
+            include_approved_skills=args.approved_skills,
         )
         if not changes:
             print("NO CHANGES")
