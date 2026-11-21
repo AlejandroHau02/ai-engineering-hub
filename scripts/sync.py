@@ -13,6 +13,8 @@ import stat
 import sys
 import tempfile
 
+from specialists import files_for_target
+
 ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
 END = "<!-- ai-engineering-hub:end -->"
@@ -64,7 +66,10 @@ def merge_block(existing: str, block: str) -> str:
     return existing[:start] + block.rstrip("\n") + existing[end + len(END):]
 
 
-def build_plan(home: Path, targets: tuple[str, ...], upgrade_skills: bool = False) -> list[Change]:
+def build_plan(
+    home: Path, targets: tuple[str, ...], upgrade_skills: bool = False,
+    include_specialists: bool = False,
+) -> list[Change]:
     changes: list[Change] = []
     for target in targets:
         config = home / (".claude/CLAUDE.md" if target == "claude" else ".codex/AGENTS.md")
@@ -96,6 +101,18 @@ def build_plan(home: Path, targets: tuple[str, ...], upgrade_skills: bool = Fals
                 changes.append(Change(dest, new_content, "UPGRADE", existing_skill))
                 continue
             changes.append(Change(dest, new_content, "CREATE"))
+        if include_specialists:
+            for relative, agent_content in files_for_target(target).items():
+                agent_dest = home / relative
+                ensure_safe(agent_dest, home)
+                if agent_dest.exists():
+                    if agent_dest.read_text(encoding="utf-8") != agent_content:
+                        raise ValueError(
+                            f"Specialist conflict: {agent_dest} differs; "
+                            "manual review required (no files were written)"
+                        )
+                    continue
+                changes.append(Change(agent_dest, agent_content, "CREATE"))
     return changes
 
 
@@ -141,6 +158,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target", choices=("both", "claude", "codex"), default="both")
     parser.add_argument("--apply", action="store_true", help="Write files explicitly")
     parser.add_argument(
+        "--specialists", action="store_true",
+        help="Include trusted first-party specialist definitions (dry-run unless --apply)",
+    )
+    parser.add_argument(
         "--upgrade-skills", action="store_true",
         help="Allow reviewed upgrades only when installed skill exactly matches v0.1 baseline",
     )
@@ -149,7 +170,11 @@ def main(argv: list[str] | None = None) -> int:
     home = args.home.expanduser().resolve()
     targets = ("claude", "codex") if args.target == "both" else (args.target,)
     try:
-        changes = build_plan(home, targets, upgrade_skills=args.upgrade_skills)
+        changes = build_plan(
+            home, targets,
+            upgrade_skills=args.upgrade_skills,
+            include_specialists=args.specialists,
+        )
         if not changes:
             print("NO CHANGES")
             return 0
