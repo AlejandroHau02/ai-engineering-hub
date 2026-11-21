@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "release": "0.2-specialists-preview",
+  "specialists": [
+    {
+      "name": "hub-ux-auditor",
+      "description": "Independent UX and accessibility audit for substantial interfaces, navigation flows and complex frontend behavior; not routine cosmetic edits.",
+      "skill": "ux-ui",
+      "focus": [
+        "Inspect current task flows, hierarchy, keyboard focus and interaction states.",
+        "Assess short-height and narrow viewport layouts, zoom, contrast and forced colors using available evidence.",
+        "Review async state, unread markers, time-based labels and safe rendering of untrusted text."
+      ],
+      "deliverable": "Prioritized UX findings with concrete evidence, affected screens/locations, smallest viable fixes, and explicit verification limits."
+    },
+    {
+      "name": "hub-backend-auditor",
+      "description": "Independent backend security and reliability audit for APIs, multitenant authorization, persistence and asynchronous workflows.",
+      "skill": "backend-engineering",
+      "focus": [
+        "Trace authenticated identity, tenant scoping and per-operation authorization separately.",
+        "Inspect conditional writes, concurrency, idempotency, failures and data integrity.",
+        "Check tests for same-tenant insufficient permissions and unauthorized cross-tenant access."
+      ],
+      "deliverable": "Prioritized backend findings with request scenario, code location, concrete impact, minimal fix and missing tests."
+    },
+    {
+      "name": "hub-architecture-advisor",
+      "description": "Read-only architecture tradeoff analysis when a change affects system boundaries, scaling, schema or long-lived interfaces.",
+      "skill": "architecture-review",
+      "focus": [
+        "Identify actual constraints, current architecture and requirements before recommending changes.",
+        "Compare minimal compatible change against alternatives and operational cost.",
+        "Separate urgent design risks from premature infrastructure and speculative abstractions."
+      ],
+      "deliverable": "Concise decision note: options, tradeoffs, recommendation, unknowns, reversibility and validation."
+    },
+    {
+      "name": "hub-code-reviewer",
+      "description": "Independent read-only code review for material diffs, regressions, security risks and correctness; avoid duplicate review of trivial fixes.",
+      "skill": "code-review",
+      "focus": [
+        "Inspect actual changed files, call sites, tests and behavior instead of trusting summaries.",
+        "Find concrete correctness, security, accessibility, concurrency and state regressions.",
+        "Distinguish reproduced defects from potential risks and cosmetic preferences."
+      ],
+      "deliverable": "Findings ordered by severity with file, trigger, impact, minimal correction and tests actually run."
+    }
+  ]
+}
