@@ -92,7 +92,7 @@ python scripts/skill_registry.py plan --target both
 
 ## Instalación verificada de skills aprobadas (PR #10, experimental)
 
-La instalación opcional de skills externas aprobadas utiliza el `sync.py` existente, con **dry-run predeterminado**. El manifiesto continúa vacío; no se instala ninguna skill de terceros por defecto.
+La instalación opcional de skills externas aprobadas utiliza el `sync.py` existente, con **dry-run predeterminado** y un mecanismo de **rollback por lote y recuperación explícita** ante interrupciones. El manifiesto continúa vacío; no se instala ninguna skill de terceros por defecto.
 
 ```powershell
 python scripts/sync.py --target both --approved-skills
@@ -100,7 +100,7 @@ python scripts/sync.py --target both --approved-skills
 python scripts/sync.py --target both --approved-skills --apply
 ```
 
-Primero se comprueba el estado declarado de licencia/aprobación en el manifiesto (que debe haber sido revisado manualmente), compatibilidad de cada cliente, el SHA del commit, blob y SHA-256 de la fuente. Este incremento **solo soporta skills autónomas de un único `SKILL.md`**; se rechazan dependencias dentro de su directorio. Consulta [la guía](docs/APPROVED_INSTALL.md) y [ADR-0005](docs/ADR-0005.md).
+Primero se comprueba el estado declarado de licencia/aprobación en el manifiesto (que debe haber sido revisado manualmente), compatibilidad de cada cliente, el SHA del commit, blob y SHA-256 de la fuente. Este incremento **solo soporta skills autónomas de un único `SKILL.md`**; se rechazan dependencias dentro de su directorio. Consulta [la guía](docs/APPROVED_INSTALL.md), [la recuperación de instalaciones](docs/TRANSACTION_RECOVERY.md) y [ADR-0005](docs/ADR-0005.md).
 
 ## Roadmap
 
