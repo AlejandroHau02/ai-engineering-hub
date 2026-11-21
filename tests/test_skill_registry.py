@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -241,6 +242,16 @@ class PreviewTests(unittest.TestCase):
         result = promotion_plan({"schemaVersion": 1, "skills": [approved()]},
                                 self.home, ("claude",))
         self.assertEqual(result["changes"][0]["status"], "BLOCKED_EXTRA_FILES")
+
+    def test_simulated_windows_junction_blocks_preview(self):
+        junction = self.home / ".claude/skills"
+        original = getattr(Path, "is_junction", lambda self: False)
+        def simulated_junction(path):
+            return path == junction or original(path)
+        with patch.object(Path, "is_junction", simulated_junction, create=True):
+            result = promotion_plan({"schemaVersion": 1, "skills": [approved()]},
+                                    self.home, ("claude",))
+        self.assertEqual(result["changes"][0]["status"], "BLOCKED_SYMLINK")
 
     def test_symlink_blocks_preview(self):
         link = self.home / ".claude"
