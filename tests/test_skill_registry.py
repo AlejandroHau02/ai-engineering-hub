@@ -133,6 +133,17 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaises(RegistryError):
             review_template(report)
 
+    def test_reject_reserved_windows_device_names(self):
+        for name in ("con", "prn", "aux", "nul", "com1", "lpt9"):
+            report = inspected()
+            report["skill"]["name"] = name
+            with self.subTest(name=name), self.assertRaisesRegex(RegistryError, "reserved"):
+                review_template(report)
+            record = approved()
+            record["id"] = name
+            with self.subTest(name=name), self.assertRaisesRegex(RegistryError, "reserved"):
+                validate_entry(record)
+
     def test_reject_invalid_approval(self):
         for field, value in [("status", "pending"), ("approvedBy", ""),
                              ("approvedAt", "tomorrow"), ("approvedAt", "2026-02-30"),
@@ -214,6 +225,22 @@ class PreviewTests(unittest.TestCase):
                                 self.home, ("claude",))
         self.assertEqual(result["changes"][0]["status"], "BLOCKED_EXISTING")
         self.assertEqual(path.read_text(encoding="utf-8"), "user content")
+
+    def test_preview_blocks_preexisting_skill_folders_without_md(self):
+        folder = self.home / ".claude/skills/demo"
+        folder.mkdir(parents=True)
+        result = promotion_plan({"schemaVersion": 1, "skills": [approved()]},
+                                self.home, ("claude",))
+        self.assertEqual(result["changes"][0]["status"], "BLOCKED_EXISTING_DIRECTORY")
+
+    def test_preview_blocks_extra_files_even_when_skill_matches(self):
+        folder = self.home / ".claude/skills/demo"
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text("whatever", encoding="utf-8")
+        (folder / "personal.txt").write_text("keep", encoding="utf-8")
+        result = promotion_plan({"schemaVersion": 1, "skills": [approved()]},
+                                self.home, ("claude",))
+        self.assertEqual(result["changes"][0]["status"], "BLOCKED_EXTRA_FILES")
 
     def test_symlink_blocks_preview(self):
         link = self.home / ".claude"
