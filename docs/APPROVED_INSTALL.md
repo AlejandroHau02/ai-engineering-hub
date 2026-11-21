@@ -24,7 +24,7 @@ Si la skill fue probada para Claude pero no para Codex (o viceversa), `--target 
 python scripts/sync.py --target claude --approved-skills
 ```
 
-Un origen modificado, URL inconsistente, hash distinto, symlink, directorio con archivos extra o conflicto local bloquea el plan **antes de escribir**.
+Un origen modificado, URL inconsistente, hash distinto, symlink, directorio de skill preexistente sin `SKILL.md`, directorio con archivos adicionales o conflicto local bloquea el plan **antes de escribir**. Solo un directorio existente con exactamente el mismo `SKILL.md` (sin otros archivos) se trata como instalación ya satisfecha.
 
 ## 3. Aplicación explícita
 
@@ -43,7 +43,7 @@ python scripts/sync.py --target claude --approved-skills
 
 Este primer incremento permite solo skills de **un archivo `SKILL.md` sin archivos hermanos** en el mismo directorio del repositorio de origen. Bundles con scripts, bibliotecas o assets necesitan un siguiente desarrollo. Una referencia a un archivo remoto o una dependencia que no esté en ese directorio podría seguir existiendo: el propietario debe evaluarla.
 
-Se exige UTF-8, LF, SHA del blob Git y SHA-256 del archivo. Las solicitudes remotas están limitadas a GitHub y pueden fallar por cuota o falta de red; tales fallos bloquean la operación, no degradan a instalación sin verificar.
+Se exige UTF-8, LF, un nombre y descripción no ambiguos en el frontmatter, SHA del blob Git y SHA-256 del archivo. La descripción debe estar expresada en una línea; las variantes multilínea todavía no se admiten. Las solicitudes remotas están limitadas a GitHub y pueden fallar por cuota o falta de red; tales fallos bloquean la operación, no degradan a instalación sin verificar.
 
 El instalador sigue siendo no transaccional entre archivos: una interrupción durante `--apply` puede dejar una instalación parcial. Revisa rutas y respaldos antes de reintentar; no borres contenido personal del usuario.
 
