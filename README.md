@@ -72,10 +72,11 @@ Una herramienta de consulta de solo lectura que busca **repositorios candidatos*
 
 ```powershell
 python scripts/skill_scout.py discover --query "agent skills" --limit 5
-python scripts/skill_scout.py inspect --url "https://github.com/owner/repo/blob/<commit-sha-40-caracteres>/skills/example/SKILL.md"
+python scripts/skill_scout.py locate --repo "owner/repo" --limit 20
+python scripts/skill_scout.py inspect --url "https://github.com/owner/repo/blob/<commit-sha-40-caracteres>/skills/example/SKILL.md" --related
 ```
 
-Devuelve JSON con procedencia, hashes y señales de riesgo. **Todos los resultados requieren revisión humana.** La búsqueda no verifica skills individuales, la inspección estática no certifica seguridad y la compatibilidad con Claude/Codex queda pendiente de pruebas. No existe promoción automática al instalador. Consulta [la guía](docs/SKILL_SCOUT.md) y [ADR-0003](docs/ADR-0003.md).
+Devuelve JSON con procedencia, hashes y señales de riesgo. **Todos los resultados requieren revisión humana.** La búsqueda inicial no verifica skills individuales; `locate` confirma rutas existentes y `inspect --related` examina una selección limitada de archivos del mismo directorio. El escaneo no certifica seguridad y la compatibilidad con Claude/Codex queda pendiente de pruebas. No existe promoción automática al instalador. Consulta [la guía](docs/SKILL_SCOUT.md) y [ADR-0003](docs/ADR-0003.md).
 
 ## Roadmap
 
