@@ -2,7 +2,7 @@
 
 **Entorno personal de ingeniería AI-first para Claude Code y Codex.**
 
-Estado: **v0.1 instalada; v0.2 en revisión**. Este repositorio es público y está separado de cualquier empleador.
+Estado: **v0.2 consolidada en `main`**, con cuatro skills propias y cuatro especialistas opcionales para cada cliente. Este repositorio es público y está separado de cualquier empleador.
 
 ## Objetivo
 
@@ -40,9 +40,9 @@ Requisitos: Python 3.10+; Claude Code o Codex instalados por separado.
 
 En Windows también puedes utilizar `py -3`. Lee [la guía de instalación](docs/INSTALL.md) para conflictos, respaldos y rollback.
 
-## Vista previa v0.2 — actualizar skills existentes
+## Actualizar skills existentes de v0.1
 
-La rama v0.2 añade controles de calidad respaldados por las evaluaciones y permite **proponer** upgrades de skills v0.1 con comprobación de contenido y respaldos. Desde esa rama:
+La v0.2 incluye controles de calidad respaldados por las evaluaciones y permite **proponer** upgrades seguros de skills v0.1 con comprobación de contenido y respaldos. Desde la raíz del repositorio:
 
 ```powershell
 python scripts/sync.py --target both --upgrade-skills
@@ -50,9 +50,9 @@ python scripts/sync.py --target both --upgrade-skills
 
 Esto **no escribe nada**. Para aplicar un upgrade después de revisarlo, se requiere además `--apply`. El script rechaza skills personalizadas y archivos sin baseline conocido. Consulta [ADR-0002](docs/ADR-0002.md) y [la guía de instalación](docs/INSTALL.md).
 
-La v0.2 está validada localmente en el equipo de prueba, pero sus PR siguen sin fusionarse; una nueva capa de especialistas se prepara en una rama apilada. La [interfaz local de gestión](https://github.com/AlejandroHau02/ai-engineering-hub/issues/4) queda planeada para una etapa posterior.
+La instalación global de v0.2 y los especialistas se validó en Windows, y el CI se ejecuta en Windows y Linux. La [interfaz local de gestión](https://github.com/AlejandroHau02/ai-engineering-hub/issues/4) queda planeada para una etapa posterior.
 
-## Vista previa — especialistas opcionales
+## Especialistas globales opcionales
 
 ```powershell
 python scripts/sync.py --target both --specialists
@@ -69,7 +69,7 @@ El instalador no descarga nada ni ejecuta código de terceros. Solo actualiza sk
 ## Roadmap
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
-- **v0.2 (en desarrollo):** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
+- **v0.2:** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
 - **v0.3:** descubrimiento de actualizaciones, evaluaciones, y aprobación antes de promover cambios.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
