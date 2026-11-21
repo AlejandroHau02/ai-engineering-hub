@@ -171,9 +171,10 @@ def inspect_related(owner: str, repo: str, commit: str, skill_path: str,
             break
         path = entry["path"]
         extension = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        filename = path.rsplit("/", 1)[-1]
         size = entry.get("size")
         if (entry.get("mode") not in ("100644", "100755")
-            or extension not in TEXT_EXTENSIONS
+            or (extension not in TEXT_EXTENSIONS and filename not in ROOT_MANIFESTS)
             or type(size) is not int or size > MAX_EACH_FILE
             or consumed + size > MAX_TOTAL_TEXT):
             skipped += 1
