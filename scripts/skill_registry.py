@@ -279,10 +279,10 @@ def promotion_plan(manifest: dict, home: Path, targets: tuple[str, ...]) -> dict
         "changes": changes, "executed": False, "filesWritten": 0,
         "requires": [
             "Independent verification of approved GitHub revision and all relevant files",
-            "Separate implementation of a verified installer with preflight and rollback",
+            "Use sync.py --approved-skills for separate pinned verification; --apply writes only after consent",
             "Explicit owner authorization before any installation",
         ],
-        "note": "Preview only. The current sync.py DOES NOT install third-party skills.",
+        "note": "Preview only; never writes. The opt-in sync.py installer separately verifies approved standalone skills.",
     }
 
 
