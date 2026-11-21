@@ -78,11 +78,23 @@ python scripts/skill_scout.py inspect --url "https://github.com/owner/repo/blob/
 
 Devuelve JSON con procedencia, hashes y señales de riesgo. **Todos los resultados requieren revisión humana.** La búsqueda inicial no verifica skills individuales; `locate` confirma rutas existentes y `inspect --related` examina una selección limitada de archivos del mismo directorio. El escaneo no certifica seguridad y la compatibilidad con Claude/Codex queda pendiente de pruebas. No existe promoción automática al instalador. Consulta [la guía](docs/SKILL_SCOUT.md) y [ADR-0003](docs/ADR-0003.md).
 
+## Registro de revisiones y aprobaciones (propuesto para v0.3)
+
+La revisión y la aprobación humana son etapas independientes del descubrimiento. El manifiesto `registry/approved-skills.json` inicia vacío, y el gestor asociado solo imprime resultados:
+
+```powershell
+python scripts/skill_registry.py review-template --report scout-report.json
+python scripts/skill_registry.py validate
+python scripts/skill_registry.py plan --target both
+```
+
+**No se instala ninguna skill externa ni existe `--apply`** en el gestor. El plan marca potenciales destinos y conflictos; las fichas requieren licencia, riesgos, compatibilidad y aprobación revisados manualmente. Consulta [la guía](docs/SKILL_REGISTRY.md) y [ADR-0004](docs/ADR-0004.md).
+
 ## Roadmap
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
 - **v0.2:** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
-- **v0.3 (en desarrollo):** primera inspección de skills externas desde GitHub; futuras fuentes, evaluaciones de compatibilidad y aprobación antes de promover cambios.
+- **v0.3 (en desarrollo):** inspección externa, fichas y manifiesto de aprobación; la copia, instalación y fuentes adicionales permanecen pendientes.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
 

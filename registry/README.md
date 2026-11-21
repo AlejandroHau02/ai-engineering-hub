@@ -25,3 +25,7 @@ Update proposals should include a change diff, compatibility results, and explic
 ## Skill Scout v0.3 (prototipo)
 
 `scripts/skill_scout.py` puede descubrir **repositorios candidatos**, localizar rutas `SKILL.md` existentes en un commit y revisar de forma estática el archivo junto con recursos relacionados limitados. Su informe no se registra aquí ni confiere confianza, compatibilidad o aprobación. El instalador sigue sin aceptar contenido de terceros. Véanse [la guía](../docs/SKILL_SCOUT.md) y [ADR-0003](../docs/ADR-0003.md).
+
+## Manifiesto de aprobaciones (v0.3 en desarrollo)
+
+`approved-skills.json` es un manifiesto **vacío por defecto**. `scripts/skill_registry.py` genera borradores de ficha, valida los campos requeridos para un registro aprobado y ofrece simulaciones de rutas. El estado `approved` es una declaración humana versionada que debe revisarse, **no** confianza automática ni autorización para instalar. El instalador existente no lee el manifiesto. Consulta [la guía](../docs/SKILL_REGISTRY.md) y [ADR-0004](../docs/ADR-0004.md).
