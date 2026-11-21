@@ -41,7 +41,7 @@ La simulación marca `PROPOSED_NEW`, `BLOCKED_UNSUPPORTED`, `BLOCKED_EXISTING`, 
 
 ## 4. Límites
 
-`validate` solo verifica la estructura, no firma ni autentica a quien aprobó, no contacta a GitHub ni verifica que el contenido externo actual coincida con sus hashes. Un informe `inspect` tampoco certifica seguridad. No existe integración de `registry/approved-skills.json` con `scripts/sync.py`. La copia o instalación será un cambio separado, con revalidación de procedencia, idempotencia, respaldos, pruebas y autorización explícita.
+`validate` solo verifica la estructura, no firma ni autentica a quien aprobó, no contacta a GitHub ni verifica que el contenido externo actual coincida con sus hashes. Un informe `inspect` tampoco certifica seguridad. Existe ahora una vía opcional de instalación **solo para skills autónomas de un único `SKILL.md`** con verificación remota de procedencia y hashes: [guía](APPROVED_INSTALL.md). Su activación requiere `--approved-skills` y una escritura adicionalmente requiere `--apply`. El registro permanece vacío; no se instala ningún tercero. Las skills con directorios completos continuarán bloqueadas hasta una evolución del esquema.
 
 Pruebas offline:
 
