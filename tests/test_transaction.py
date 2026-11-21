@@ -109,6 +109,71 @@ class TransactionTests(unittest.TestCase):
         self.assertFalse((self.home / ".claude/skills").exists())
         self.assertFalse(self.workspace().exists())
 
+    def test_failure_on_second_backup_restores_every_file(self):
+        claude = self.write_existing(b"my Claude config\n")
+        codex = self.home / ".codex/AGENTS.md"
+        codex.parent.mkdir(parents=True)
+        codex.write_bytes(b"my Codex config\n")
+        changes = sync.build_plan(self.home, ("claude", "codex"))
+        link = transaction.os.link
+        counter = 0
+
+        def interrupt_second_backup(src, dst, *args, **kwargs):
+            nonlocal counter
+            counter += 1
+            if counter == 2:
+                raise OSError("injected second backup failure")
+            return link(src, dst, *args, **kwargs)
+
+        with patch.object(transaction.os, "link", side_effect=interrupt_second_backup):
+            with self.assertRaisesRegex(OSError, "second backup failure"):
+                transaction.apply_transaction(
+                    changes, self.home, sync.verify_change, sync.write_with_backup,
+                    sync.ensure_safe
+                )
+        self.assertEqual(claude.read_bytes(), b"my Claude config\n")
+        self.assertEqual(codex.read_bytes(), b"my Codex config\n")
+        self.assertEqual(list(self.home.rglob("*.bak.*")), [])
+        self.assertFalse(self.workspace().exists())
+
+    def test_interrupted_after_backup_publication_recovers(self):
+        config = self.setup_interrupted()
+        state = json.loads((self.workspace() / transaction.JOURNAL).read_text())
+        backup = config.with_name(state["entries"][0]["backup"])
+        backup.write_bytes(b"original\n")
+        self.assertEqual(sync.main(["--recover", "--home", str(self.home)]), 0)
+        self.assertEqual(config.read_bytes(), b"original\n")
+        self.assertFalse(backup.exists())
+        self.assertFalse(self.workspace().exists())
+
+    def test_modified_backup_causes_safe_manual_recovery(self):
+        config = self.setup_interrupted()
+        state = json.loads((self.workspace() / transaction.JOURNAL).read_text())
+        backup = config.with_name(state["entries"][0]["backup"])
+        backup.write_bytes(b"user-modified backup\n")
+        self.assertEqual(sync.main(["--recover", "--home", str(self.home)]), 1)
+        self.assertEqual(config.read_bytes(), b"updated\n")
+        self.assertEqual(backup.read_bytes(), b"user-modified backup\n")
+        self.assertTrue(self.workspace().exists())
+
+    def test_forged_journal_unrelated_directory_is_rejected(self):
+        config = self.setup_interrupted()
+        journal = self.workspace() / transaction.JOURNAL
+        state = json.loads(journal.read_text())
+        state["createdDirs"] = [".claude/unrelated-folder"]
+        journal.write_text(json.dumps(state))
+        self.assertEqual(sync.main(["--recover", "--home", str(self.home)]), 1)
+        self.assertEqual(config.read_bytes(), b"updated\n")
+
+    def test_forged_snapshot_filename_is_rejected(self):
+        config = self.setup_interrupted()
+        journal = self.workspace() / transaction.JOURNAL
+        state = json.loads(journal.read_text())
+        state["entries"][0]["snapshot"] = "before-9999.bin"
+        journal.write_text(json.dumps(state))
+        self.assertEqual(sync.main(["--recover", "--home", str(self.home)]), 1)
+        self.assertEqual(config.read_bytes(), b"updated\n")
+
     def test_success_produces_prior_version_backup_and_no_journal(self):
         original = b"My own instructions\n"
         config = self.write_existing(original)
