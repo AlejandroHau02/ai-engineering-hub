@@ -128,7 +128,7 @@ def _read_journal(directory: Path, home: Path, ensure_safe) -> dict:
               or not isinstance(mode, int) or not 0 <= mode <= 0o7777):
             raise TransactionError("Invalid original file metadata")
     for rel in data["createdDirs"]:
-        if (not isinstance(rel, str) or not rel.startswith((".claude/", ".agents/", ".codex/"))
+        if (not isinstance(rel, str) or rel.split("/")[0] not in (".claude", ".agents", ".codex")
             or "\\" in rel or any(part in ("", ".", "..") for part in rel.split("/"))
             or rel == WORK_DIR):
             raise TransactionError("Unsafe created directory path")
