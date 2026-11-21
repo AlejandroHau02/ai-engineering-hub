@@ -13,6 +13,7 @@ Usar agentes de programación que inspeccionen el contexto, cuestionen decisione
 - [Engineering Core](core/ENGINEERING_CORE.md): principios globales de ingeniería.
 - [Adaptadores](adapters/): instrucciones globales específicas para Claude Code y Codex.
 - [Skills](skills/): arquitectura, UX/UI, backend y revisión de código.
+- [Especialistas](specialists/README.md): catálogo común y agentes nativos de Claude/Codex; instalación global opcional con `--specialists`.
 - [Instalador](scripts/sync.py): Python estándar, simulación por defecto, aplicación opcional con respaldo.
 - [Pruebas](tests/test_sync.py) y CI para validar instalación segura.
 - [Evaluaciones](evals/README.md) de criterio, UX/UI, implementación y revisión cruzada; [rúbrica](evals/RUBRIC.md) y [calculadora local](scripts/score_evals.py).
@@ -49,7 +50,15 @@ python scripts/sync.py --target both --upgrade-skills
 
 Esto **no escribe nada**. Para aplicar un upgrade después de revisarlo, se requiere además `--apply`. El script rechaza skills personalizadas y archivos sin baseline conocido. Consulta [ADR-0002](docs/ADR-0002.md) y [la guía de instalación](docs/INSTALL.md).
 
-La v0.2 es una propuesta sobre la rama v0.1, aún no fusionada; no significa que las skills globales locales se hayan actualizado. La [interfaz local de gestión](https://github.com/AlejandroHau02/ai-engineering-hub/issues/4) queda planeada para una etapa posterior.
+La v0.2 está validada localmente en el equipo de prueba, pero sus PR siguen sin fusionarse; una nueva capa de especialistas se prepara en una rama apilada. La [interfaz local de gestión](https://github.com/AlejandroHau02/ai-engineering-hub/issues/4) queda planeada para una etapa posterior.
+
+## Vista previa — especialistas opcionales
+
+```powershell
+python scripts/sync.py --target both --specialists
+```
+
+El primer paso es un dry-run; añade definiciones globales a `~/.claude/agents/` y `~/.codex/agents/` solo con `--apply`. Los especialistas se limitan a revisión y asesoría; no reemplazan al agente principal. Consulta [instalación, límites de permisos y ejemplos](specialists/README.md). En Codex las restricciones de solo lectura son instrucciones, no un sandbox independiente.
 
 ## Principios de seguridad
 
@@ -60,7 +69,7 @@ El instalador no descarga nada ni ejecuta código de terceros. Solo actualiza sk
 ## Roadmap
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
-- **v0.2 (en desarrollo):** upgrades verificados de skills instaladas, mejores controles de calidad y evaluación de permisos internos.
+- **v0.2 (en desarrollo):** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
 - **v0.3:** descubrimiento de actualizaciones, evaluaciones, y aprobación antes de promover cambios.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
