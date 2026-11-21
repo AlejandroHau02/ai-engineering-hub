@@ -98,14 +98,14 @@ def _read_journal(directory: Path, home: Path, ensure_safe) -> dict:
         raise TransactionError("Invalid transaction journal") from None
     if not isinstance(data, dict) or set(data) != {"version", "state", "entries", "createdDirs"}:
         raise TransactionError("Invalid transaction journal fields")
-    if data["version"] != 1 or data["state"] not in ("preparing", "pending", "committed"):
+    if type(data["version"]) is not int or data["version"] != 1 or data["state"] not in ("preparing", "pending", "committed"):
         raise TransactionError("Invalid transaction state/version")
     if not isinstance(data["entries"], list) or len(data["entries"]) > MAX_FILES:
         raise TransactionError("Invalid transaction entry count")
     if not isinstance(data["createdDirs"], list) or len(data["createdDirs"]) > 5000:
         raise TransactionError("Invalid created directory list")
     seen = set()
-    for record in data["entries"]:
+    for index, record in enumerate(data["entries"]):
         if not isinstance(record, dict) or set(record) != (
             {"path", "oldSha256", "newSha256", "snapshot", "backup", "originalMode"}
         ):
@@ -123,15 +123,20 @@ def _read_journal(directory: Path, home: Path, ensure_safe) -> dict:
         if old is None:
             if snapshot is not None or backup is not None or mode is not None:
                 raise TransactionError("New file unexpectedly has a backup")
-        elif (not isinstance(snapshot, str) or not re.fullmatch(r"before-[0-9]{4}\.bin", snapshot)
+        elif (snapshot != f"before-{index:04d}.bin"
               or not isinstance(backup, str) or not BACKUP_RE.fullmatch(backup)
-              or not isinstance(mode, int) or not 0 <= mode <= 0o7777):
+              or not backup.startswith(Path(rel).name + ".bak.")
+              or type(mode) is not int or not 0 <= mode <= 0o7777):
             raise TransactionError("Invalid original file metadata")
+    if len(data["createdDirs"]) != len(set(data["createdDirs"])):
+        raise TransactionError("Duplicate directory records")
     for rel in data["createdDirs"]:
         if (not isinstance(rel, str) or rel.split("/")[0] not in (".claude", ".agents", ".codex")
             or "\\" in rel or any(part in ("", ".", "..") for part in rel.split("/"))
             or rel == WORK_DIR):
             raise TransactionError("Unsafe created directory path")
+        if not any(item_path.startswith(rel + "/") for item_path in seen):
+            raise TransactionError("Created directory is unrelated to managed changes")
     return data
 
 
