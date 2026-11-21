@@ -8,22 +8,22 @@ import json
 from pathlib import Path
 import sys
 
-WEIGHTS: dict[str, dict[str, float]] = {
+WEIGHTS: dict[str, dict[str, int]] = {
     "E01": {
-        "problem": 0.20, "challenge": 0.25, "pragmatism": 0.25,
-        "usability": 0.20, "evidence": 0.10,
+        "problem": 20, "challenge": 25, "pragmatism": 25,
+        "usability": 20, "evidence": 10,
     },
     "E02": {
-        "risk": 0.35, "safe_alternative": 0.30,
-        "pragmatism": 0.20, "clarity": 0.15,
+        "risk": 35, "safe_alternative": 30,
+        "pragmatism": 20, "clarity": 15,
     },
     "E03": {
-        "ux": 0.25, "functional": 0.30, "accessibility": 0.20,
-        "visual": 0.15, "verification": 0.10,
+        "ux": 25, "functional": 30, "accessibility": 20,
+        "visual": 15, "verification": 10,
     },
     "E04": {
-        "findings": 0.40, "priority": 0.20,
-        "evidence": 0.20, "signal": 0.20,
+        "findings": 40, "priority": 20,
+        "evidence": 20, "signal": 20,
     },
 }
 
@@ -55,7 +55,7 @@ def evaluate(card: object) -> dict[str, object]:
     return {
         "scenario": scenario,
         "agent": agent.strip(),
-        "percentage": round(total * 25, 1),
+        "percentage": round(total / 4, 1),
         "critical_failure": critical,
     }
 
