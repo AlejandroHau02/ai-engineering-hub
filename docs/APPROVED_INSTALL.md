@@ -24,7 +24,7 @@ Si la skill fue probada para Claude pero no para Codex (o viceversa), `--target 
 python scripts/sync.py --target claude --approved-skills
 ```
 
-Un origen modificado, URL inconsistente, hash distinto, symlink, directorio de skill preexistente sin `SKILL.md`, directorio con archivos adicionales o conflicto local bloquea el plan **antes de escribir**. Solo un directorio existente con exactamente el mismo `SKILL.md` (sin otros archivos) se trata como instalación ya satisfecha.
+Un origen modificado, URL inconsistente, hash distinto, symlink, junction/reparse point de Windows, directorio de skill preexistente sin `SKILL.md`, directorio con archivos adicionales o conflicto local bloquea el plan **antes de escribir**. Solo un directorio existente con exactamente el mismo `SKILL.md` (sin otros archivos) se trata como instalación ya satisfecha.
 
 ## 3. Aplicación explícita
 
@@ -45,7 +45,7 @@ Este primer incremento permite solo skills de **un archivo `SKILL.md` sin archiv
 
 Se exige UTF-8, LF, un nombre y descripción no ambiguos en el frontmatter, SHA del blob Git y SHA-256 del archivo. La descripción debe estar expresada en una línea; las variantes multilínea todavía no se admiten. Las solicitudes remotas están limitadas a GitHub y pueden fallar por cuota o falta de red; tales fallos bloquean la operación, no degradan a instalación sin verificar.
 
-El instalador sigue siendo no transaccional entre archivos: una interrupción durante `--apply` puede dejar una instalación parcial. Revisa rutas y respaldos antes de reintentar; no borres contenido personal del usuario.
+El instalador sigue siendo no transaccional entre archivos: una interrupción durante `--apply` puede dejar una instalación parcial. Las verificaciones de seguridad de rutas se repiten antes de escribir, pero no pueden descartar completamente carreras TOCTOU de otro proceso local concurrente. Revisa rutas y respaldos antes de reintentar; no borres contenido personal del usuario.
 
 Ejecuta las pruebas locales con:
 
