@@ -1,36 +1,58 @@
-# Installation (experimental v0.1)
+# Instalación y upgrades del Hub (v0.2 en revisión)
 
-Requires Python 3.10+ and a local checkout. Claude Code and Codex must be installed independently.
+Requiere **Python 3.10+**, un checkout local del repositorio y Claude Code o Codex instalados independientemente.
 
-**Dry-run, without changing files:**
+## Instalar por primera vez
 
-```bash
+```powershell
 python scripts/sync.py --target both
-```
-
-**Explicit installation after review:**
-
-```bash
 python scripts/sync.py --target both --apply
 ```
 
-On Windows, `py -3` is an alternative to `python`. A single provider can be chosen with `--target claude` or `--target codex`.
+El primer comando solo muestra el plan. El segundo escribe **únicamente tras tu autorización**, y hace copias de seguridad de los archivos que cambie. Puedes elegir `--target claude` o `--target codex`.
 
-The installer writes a managed block to the current user's global `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, preserving everything outside that block. It creates four skills under `~/.claude/skills/` and `~/.agents/skills/`. Modified global files receive timestamped `.bak.*` backups.
+Ubicaciones globales: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.claude/skills/` y `~/.agents/skills/`. El Hub no agrega archivos a los proyectos.
 
-**Safety:** conflicting skill files, malformed managed markers and symlink destinations abort before writing. v0.1 never overwrites an existing skill with different content. No network, external skills, packages, credentials or hidden scripts are involved.
+## Actualizar skills previamente instaladas con v0.1
 
-**Test in a disposable home:**
+La v0.2 incorpora mejoras de UX/UI, backend y revisión de código. El instalador original no podía actualizar las skills ya instaladas.
 
-```bash
-python scripts/sync.py --target both --home ./scratch-home
+Con la **rama v0.2 revisada** y dentro de la raíz del repositorio:
+
+1. Primero ejecuta el diagnóstico. No escribe nada:
+   ```powershell
+   python scripts/sync.py --target both --upgrade-skills
+   ```
+2. Examina qué aparece como `UPGRADE`, `UPDATE` o `CREATE`. Si no lo esperas, **no apliques**.
+3. Cuando lo apruebes, escribe con respaldos:
+   ```powershell
+   python scripts/sync.py --target both --upgrade-skills --apply
+   ```
+4. Comprueba idempotencia:
+   ```powershell
+   python scripts/sync.py --target both
+   ```
+   Esperado cuando los archivos coinciden: `NO CHANGES`. Reinicia las sesiones de Claude/Codex para adoptar el contenido.
+
+Sin `--upgrade-skills`, el instalador **rechaza** sobrescribir una skill existente que difiere. Incluso con esa opción, solo actualiza los archivos que coincidan exactamente con los baselines aprobados de v0.1: si editaste una skill localmente, se detiene sin sobrescribirla.
+
+Las instrucciones fuera del bloque `<!-- ai-engineering-hub:start -->` / `<!-- ai-engineering-hub:end -->` se conservan. Las modificaciones **dentro** de ese bloque pertenecen al Hub y pueden ser reemplazadas: revisa el plan y los respaldos antes de aplicar.
+
+## Simulaciones y pruebas aisladas
+
+```powershell
+python scripts/sync.py --target both --home ./scratch-home --upgrade-skills
 python -m unittest discover -s tests -v
 ```
 
-The first command above only previews; it does not create `scratch-home`.
+La primera línea es solo una simulación. La segunda ejecuta pruebas con directorios temporales independientes; no instala nada en tus directorios globales reales.
 
-Start a new Claude/Codex session after installing. Confirm instruction loading using a non-sensitive test repository and check that relevant skills are discoverable. Behavior quality needs human evaluation; unit tests validate the installer, not the model's judgment.
+## Recuperación
 
-## Rollback
+Los archivos actualizados tienen respaldos `*.bak.<timestamp>` al lado del original. Puedes restaurar manualmente el respaldo apropiado tras inspeccionarlo. No borres reglas personales o directorios de skills que no sean del Hub.
 
-Restore the most recent timestamped backup for modified global instructions or remove only the block between `<!-- ai-engineering-hub:start -->` and `<!-- ai-engineering-hub:end -->`. Remove a created skill directory only after confirming it contains no personal work. Do not erase unrelated instructions.
+La aplicación es segura por archivo, pero **no completamente transaccional** entre todos los archivos; si un error interrumpe el proceso, inspecciona el estado antes de reintentar.
+
+## Política de seguridad
+
+No se descargan skills de terceros, no se instalan paquetes y no se ejecutan comandos externos. Las actualizaciones requieren revisión humana. El repositorio es público y no debe almacenar secretos ni código privado.
