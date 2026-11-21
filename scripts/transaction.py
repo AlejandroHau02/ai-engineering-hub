@@ -294,7 +294,7 @@ def _rollback(directory: Path, home: Path, ensure_safe) -> None:
 def recover(home: Path, ensure_safe) -> bool:
     """Explicit recovery, never silently overwrite unknown local modifications."""
     directory = home / WORK_DIR
-    ensure_safe(directory, home)
+    ensure_safe(directory / JOURNAL, home)
     if not directory.exists():
         return False
     _rollback(directory, home, ensure_safe)
