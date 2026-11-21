@@ -143,6 +143,24 @@ class ApprovedPromotionTests(unittest.TestCase):
         with self.assertRaisesRegex(PromotionError, "frontmatter"):
             approved_candidates(("claude",), self.manifest, fake_api(raw))
 
+    def test_frontmatter_description_is_required(self):
+        for raw in (
+            RAW.replace(b"description: A standalone third-party skill\n", b""),
+            RAW.replace(b"description: A standalone third-party skill", b"description: |"),
+            RAW.replace(b"description: A standalone third-party skill", b"description: "),
+            RAW.replace(b"description: A standalone third-party skill",
+                        b"description: One\ndescription: Two"),
+        ):
+            self.write_manifest([entry(raw)])
+            with self.subTest(raw=raw), self.assertRaisesRegex(PromotionError, "description"):
+                approved_candidates(("claude",), self.manifest, fake_api(raw))
+
+    def test_duplicate_frontmatter_name_is_rejected(self):
+        raw = RAW.replace(b"name: third-party-demo", b"name: third-party-demo\nname: third-party-demo")
+        self.write_manifest([entry(raw)])
+        with self.assertRaisesRegex(PromotionError, "frontmatter name"):
+            approved_candidates(("claude",), self.manifest, fake_api(raw))
+
     def test_incompatible_target_rejected_before_source_fetch(self):
         self.write_manifest([entry(codex="unsupported")])
         def forbidden(_):
