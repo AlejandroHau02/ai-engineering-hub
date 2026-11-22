@@ -49,7 +49,9 @@ Inicia una nueva sesión desde cualquier repositorio y pide, por ejemplo:
 - «Consulta **hub-architecture-advisor** sobre las opciones de migración, sin modificar código».
 - «Usa **hub-code-reviewer** para revisar este diff; quiero hallazgos concretos y sin cambios».
 
-En Claude Code puedes utilizar `/agents` para explorar agentes disponibles. En Codex CLI utiliza `/subagents` para inspeccionar subagentes activos. La decisión de delegar automáticamente depende del modelo, el contexto y la versión; **no prometemos invocación automática**. Si un especialista no aparece, revisa el archivo global y la versión del cliente.
+**En versiones recientes de Claude Code el asistente `/agents` fue retirado.** Para revisar las definiciones instaladas, inspecciona `~/.claude/agents/` y solicita explícitamente al agente principal la delegación a `hub-...`; confirma la invocación nativa en el rastro de la sesión, no solo en el texto del resultado. En Codex CLI utiliza `/subagents` para inspeccionar subagentes activos y sus resultados. La selección automática depende del modelo, contexto y versión: **no se promete delegación automática**. Si un especialista no aparece, revisa el archivo global y la versión del cliente.
+
+**Prueba real de noviembre de 2026:** Claude Code y Codex reportaron ejecución nativa de `hub-backend-auditor` sobre una fixture sintética de seguridad. Se observaron cuatro hallazgos principales en ambos; las trazas internas no fueron auditadas de manera independiente. Ver [criterios de cierre v0.3](../docs/SYNCODE_V03_EXIT.md).
 
 ## Selección proporcional
 
@@ -65,4 +67,4 @@ En Claude Code puedes utilizar `/agents` para explorar agentes disponibles. En C
 
 ## Alcance pendiente
 
-No incluye aún la interfaz local, el descubrimiento de skills de terceros, reglas de selección automática medidas, renovación de perfiles modificados ni ejecución cruzada automática entre proveedores. Todo eso necesitará pruebas, revisión y autorización adicionales.
+No incluye aún la interfaz local, la selección automática de especialistas medida, la renovación de perfiles modificados ni la ejecución cruzada automática entre proveedores. El **descubrimiento de skills externas** pertenece a Skill Scout v0.3, que es un módulo separado con revisión humana e instalación optativa solo de `SKILL.md` autónomos; véase [guía Scout](../docs/SKILL_SCOUT.md).
