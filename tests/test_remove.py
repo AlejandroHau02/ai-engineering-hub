@@ -1,6 +1,9 @@
 """Controlled removal tests: no live home, no network or unapproved deletions."""
 from pathlib import Path
 import json
+import hashlib
+from argparse import Namespace
+from unittest.mock import patch
 import subprocess
 import sys
 import tempfile
@@ -150,6 +153,54 @@ class RemoveTests(unittest.TestCase):
         from argparse import Namespace
         return Namespace(target="claude", skill="code-review",
                          specialist=None, approved_skill=None)
+
+    def test_approved_skill_removal_uses_pinned_hash_without_network(self):
+        content = b"---\\nname: demo\\ndescription: Synthetic approved skill\\n---\\n"
+        digest = hashlib.sha256(content).hexdigest()
+        commit = "a" * 40
+        evidence = "https://github.com/example/repo/issues/1"
+        entry = {
+            "id": "demo",
+            "source": {
+                "url": f"https://github.com/example/repo/blob/{commit}/skills/demo/SKILL.md",
+                "repository": "example/repo",
+                "path": "skills/demo/SKILL.md",
+                "commit": commit,
+                "blobSha": "b" * 40,
+                "contentSha256": digest,
+                "maintainer": "example",
+            },
+            "assessment": {
+                "license": {"status": "verified", "identifier": "MIT", "evidence": evidence},
+                "risk": {"status": "accepted", "evidence": evidence,
+                         "indicators": [], "relatedScan": "not-scanned"},
+                "compatibility": {
+                    "claudeCode": {"status": "tested", "evidence": evidence},
+                    "codex": {"status": "unsupported", "evidence": evidence},
+                },
+            },
+            "approval": {"status": "approved", "approvedBy": "test-reviewer",
+                         "approvedAt": "2026-11-21", "evidence": evidence},
+        }
+        manifest = self.home / "manifest.json"
+        manifest.write_text(json.dumps({"schemaVersion": 1, "skills": [entry]}),
+                            encoding="utf-8")
+        folder = self.home / ".claude/skills/demo"
+        folder.mkdir(parents=True)
+        dest = folder / "SKILL.md"
+        dest.write_bytes(content)
+        args = Namespace(target="claude", skill=None, specialist=None,
+                         approved_skill="demo")
+        with patch.object(remove, "DEFAULT_MANIFEST", manifest):
+            candidate = remove._candidate(args)
+            self.assertEqual(remove.remove(self.home, candidate, apply=False),
+                             ("planned", None))
+            status, backup = remove.remove(self.home, candidate, apply=True)
+        self.assertEqual(status, "removed")
+        self.assertIsNotNone(backup)
+        self.assertEqual(backup.parent, self.home / ".claude")
+        self.assertEqual((backup / "SKILL.md").read_bytes(), content)
+        self.assertFalse(folder.exists())
 
     def test_unregistered_approved_skill_is_refused(self):
         result = self.remove("--target", "claude",
