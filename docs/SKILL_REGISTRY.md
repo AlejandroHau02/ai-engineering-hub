@@ -1,6 +1,6 @@
 # Registro de aprobaciones — Skill Scout v0.3
 
-Este módulo permite **preparar** una evaluación, **validar** un catálogo manualmente aprobado y **simular** rutas de una promoción futura. No instala, copia, ejecuta ni descarga código.
+Este módulo permite **preparar** una evaluación, **validar** un catálogo manualmente aprobado y **simular** rutas para el instalador opcional. **El gestor del registro por sí mismo** no instala, copia, ejecuta ni descarga código.
 
 ## 1. Preparar ficha pendiente
 
