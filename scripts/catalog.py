@@ -20,8 +20,10 @@ file reads are size-capped and text is sanitized before it is reported.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import unicodedata
 
 from cli_contract import (
@@ -69,6 +71,10 @@ def _read_small(path: Path) -> str | None:
         if is_link_or_reparse(path) or not path.is_file():
             return None
         with path.open("rb") as handle:
+            # Re-check the opened object: a file swapped for a pipe or device
+            # between the check and the open must not block the read.
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return None
             return handle.read(MAX_READ).decode("utf-8", errors="replace")
     except OSError:
         return None
@@ -111,8 +117,23 @@ def _describe_agent(path: Path) -> str | None:
         return None
     if path.suffix == ".toml":
         match = TOML_DESCRIPTION.search(text)
-        return clean(match[1].encode().decode("unicode_escape", "replace")) if match else None
+        if not match:
+            return None
+        try:  # TOML basic strings use JSON-compatible escapes; keep UTF-8 intact
+            return clean(json.loads('"' + match[1] + '"'))
+        except ValueError:
+            return clean(match[1])
     return clean(frontmatter(text).get("description"))
+
+
+def _linked_ancestor(home: Path, folder: Path) -> bool:
+    """True if any component between home and folder is a link or junction."""
+    current = folder
+    while current != home and current != current.parent:
+        if is_link_or_reparse(current):
+            return True
+        current = current.parent
+    return False
 
 
 def unmanaged(home: Path, items: list[dict]) -> dict:
@@ -127,7 +148,7 @@ def unmanaged(home: Path, items: list[dict]) -> dict:
             found: list[dict] = []
             truncated = False
             try:
-                if folder.exists() and not is_link_or_reparse(folder) and folder.is_dir():
+                if folder.exists() and not _linked_ancestor(home, folder) and folder.is_dir():
                     for entry in sorted(folder.iterdir(), key=lambda p: p.name.lower()):
                         stem = entry.name if kind == "skills" else entry.stem
                         if stem in managed or entry.name.startswith("."):

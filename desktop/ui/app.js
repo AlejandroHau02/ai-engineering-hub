@@ -55,10 +55,10 @@
         "SYNCODE Desktop está incompleto: no se encontró el runtime Python o el núcleo. Reinstala la aplicación o, si usas el paquete portable, extrae el ZIP completo en una carpeta propia."],
       spawnFailed: [`La app no pudo iniciar ${S.name}`, "El sistema no permitió iniciar el runtime Python integrado."],
       timeout: [`${S.Name} no respondió a tiempo`, "Se superó el tiempo máximo y el proceso se detuvo. Ningún archivo fue modificado."],
-      outputTooLarge: ["Respuesta demasiado grande", `La respuesta de ${S.name} superó el tamaño permitido y se descartó.`],
+      outputTooLarge: ["Respuesta demasiado grande", `La respuesta ${S.of} superó el tamaño permitido y se descartó.`],
       noOutput: [`${S.Name} terminó sin respuesta`, "El proceso terminó sin un resultado JSON. El estado es desconocido."],
-      invalidJson: ["Respuesta no válida", `La respuesta de ${S.name} no es JSON válido y se descartó.`],
-      contractMismatch: [`Respuesta de ${S.name} incompatible`, "La respuesta no tiene el formato que espera esta versión de la app y se descartó."],
+      invalidJson: ["Respuesta no válida", `La respuesta ${S.of} no tiene un formato válido y se descartó.`],
+      contractMismatch: [`Respuesta ${S.of} incompatible`, "La respuesta no tiene el formato que espera esta versión de la app y se descartó."],
       processFailed: ["El proceso terminó de forma inesperada", "El runtime Python finalizó con un código fuera del contrato."],
       busy: ["Otra operación en curso", "SYNCODE ya está ejecutando un diagnóstico, una vista previa o una aplicación. Espera a que termine."],
       integrityFailed: ["El paquete de SYNCODE no supera la verificación de integridad",
@@ -68,9 +68,9 @@
     return table[code] || ["La app no pudo comunicarse con el núcleo", "Fallo de transporte no reconocido."];
   }
   const SUBJECTS = {
-    diagnostico: { name: "Doctor", Name: "Doctor", what: "el diagnóstico", notEvaluated: "Esto no es un resultado del diagnóstico: no se evaluó el estado de la instalación." },
-    sincronizacion: { name: "el planificador", Name: "El planificador", what: "la vista previa", notEvaluated: "Esto no es una vista previa: no se calculó ningún plan." },
-    catalogo: { name: "el catálogo", Name: "El catálogo", what: "el catálogo", notEvaluated: "No se pudo leer el catálogo; no se evaluó ningún componente." },
+    diagnostico: { name: "Doctor", Name: "Doctor", of: "de Doctor", what: "el diagnóstico", notEvaluated: "Esto no es un resultado del diagnóstico: no se evaluó el estado de la instalación." },
+    sincronizacion: { name: "el planificador", Name: "El planificador", of: "del planificador", what: "la vista previa", notEvaluated: "Esto no es una vista previa: no se calculó ningún plan." },
+    catalogo: { name: "el catálogo", Name: "El catálogo", of: "del catálogo", what: "el catálogo", notEvaluated: "No se pudo leer el catálogo; no se evaluó ningún componente." },
   };
   const KIND = {
     CREATE: ["Se creará", "info"],
@@ -263,7 +263,7 @@
 
   function failurePanel(screen, outcome, at, retry) {
     const subject = SUBJECTS[screen];
-    const prefix = screen === "diagnostico" ? "diag" : "sync";
+    const prefix = SCREENS[screen] ? SCREENS[screen].prefix : "diag";
     let origin, title, body;
     const rows = [];
     if (outcome.kind === "doctorError") {
@@ -272,6 +272,11 @@
       title = "No se pudo completar el diagnóstico";
       body = interrupted ? "Doctor se interrumpió antes de terminar." : outcome.message || "Doctor no pudo completar la inspección.";
       rows.push(["Código", outcome.errorCode], ["Salida", outcome.exitCode]);
+    } else if (outcome.kind === "catalogError") {
+      origin = "El catálogo informó un error";
+      title = "No se pudo leer el catálogo";
+      body = outcome.message || "El núcleo no pudo leer los componentes.";
+      rows.push(["Código", outcome.code]);
     } else {
       const code = outcome.kind === "transport" ? outcome.code : "contractMismatch";
       [title, body] = transportText(code, subject);
@@ -798,7 +803,7 @@
     });
     const code = el("code", { class: "command", text: command });
     return el("div", { class: "recovery" },
-      el("p", { class: "recovery-title", text: "Cómo recuperar (la app no lo hace por ti):" }),
+      el("p", { class: "recovery-title", text: "Recuperación manual (PowerShell):" }),
       el("ol", {},
         el("li", { text: "Abre PowerShell. No ejecutes otra sincronización mientras tanto." }),
         el("li", {}, "Ejecuta este comando, que usa el runtime integrado de esta app: ", code, " ", copy),
@@ -1034,7 +1039,7 @@
       return el("li", { class: "panel component" },
         el("h3", { text: component.name }),
         el("p", { class: "summary", text: COMPONENT_ES[component.name] || component.description || "Sin descripción." }),
-        component.kind === "specialist" ? el("p", { class: "note", text: "Solo analiza y recomienda; no edita archivos ni ejecuta cambios." }) : null,
+        component.kind === "specialist" ? el("p", { class: "note", text: "Pensado para analizar y recomendar. En Claude Code se instala limitado a herramientas de lectura (Read, Glob, Grep); en Codex el «solo lectura» es una instrucción y hereda los permisos de la sesión." }) : null,
         el("ul", { class: "client-status" }, statuses.map(([client, status]) => el("li", {},
           `${CLIENT_NAMES[client]}: `, status ? statusChip(status) : el("span", { class: "label", text: "Sin datos (ejecuta Diagnóstico)" })))),
         notes.length ? el("p", { class: "note", text: notes.join(" ") }) : null,
@@ -1116,6 +1121,9 @@
 
   function setWriting(on) {
     writing = on;
+    if (!on && active === "catalogo" && !screens.catalogo.current) {
+      setTimeout(() => runScreen("catalogo", null), 0);
+    }
     for (const control of $("sync-form").elements) control.disabled = on;
     for (const id of ["diag-run", "cat-run"]) {
       if (on) $(id).setAttribute("aria-disabled", "true");
@@ -1175,7 +1183,7 @@
       case "notAuthorized":
         return { level: "warn", title: "No se hizo nada: la autorización caducó", body: "El diagnóstico se está actualizando; si sigue habiendo una operación pendiente, vuelve a pulsar «Recuperar»." };
       case "transport":
-        return { level: "failure", title: "No se ejecutó la recuperación", body: transportText(o.code, SUBJECTS.diagnostico)[1] };
+        return { level: "failure", title: "No se ejecutó la recuperación", body: transportText(o.code, { name: "la recuperación", Name: "La recuperación", of: "de la recuperación" })[1] };
       default:
         return { level: "failure", title: "No se pudo confirmar qué pasó", body: "Mira el diagnóstico actualizado." };
     }
@@ -1191,7 +1199,7 @@
     if (o.code) details.push(["Código", o.code]);
     if (o.message) details.push(["Mensaje del núcleo", o.message]);
     if (o.detail) details.push(["Detalle", o.detail]);
-    const steps = o.kind === "stillPending" && o.code !== "cleanup-failed" ? recoverySteps() : null;
+    const steps = null; // a refused recovery needs manual review, not the same command again
     return el("section", { class: failure ? "panel failure" : `panel verdict level-${text.level}`, "aria-labelledby": "diag-recover-title" },
       icon(failure ? "failure" : text.level),
       el("div", {},
@@ -1273,6 +1281,14 @@
     state.current = { run, at };
     if (spec.good(run)) state.lastGood = { run, at };
     paintScreen(name);
+    if (name === "sincronizacion") {
+      // Rust invalidated the recover token: show it in Diagnóstico, and fetch a
+      // fresh one when the planner stopped on a pending transaction.
+      if (screens.diagnostico.current) paintScreen("diagnostico");
+      if (run.outcome.kind === "plannerRefusal" && run.outcome.code === "transaction-pending") {
+        runScreen("diagnostico", null, true);
+      }
+    }
     updateFooter(run);
     const seconds = typeof run.durationMs === "number" ? ` en ${(run.durationMs / 1000).toFixed(1)} s` : "";
     $(`${spec.prefix}-meta`).textContent = spec.meta(at, seconds);
@@ -1322,7 +1338,7 @@
     window.addEventListener("hashchange", onHashChange);
 
     $("diag-run").addEventListener("click", () => {
-      $("diag-recover-result").replaceChildren(); // a manual diagnosis starts fresh
+      if (!writing && !screens.diagnostico.running) $("diag-recover-result").replaceChildren();
       runScreen("diagnostico", $("diag-run"));
     });
     $("sync-form").addEventListener("submit", (event) => {
@@ -1342,7 +1358,7 @@
       if (event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r")) {
         event.preventDefault();
         if (writing || $("apply-dialog").open || $("recover-dialog").open) return;
-        runScreen(active, $(`${SCREENS[active].prefix}-run`));
+        $(`${SCREENS[active].prefix}-run`).click();
       }
     });
     document.addEventListener("contextmenu", (event) => event.preventDefault());

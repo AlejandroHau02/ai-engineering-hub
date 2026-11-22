@@ -142,13 +142,19 @@ async fn run_doctor(
         move |runtime, env| {
             let generation = auth.recovery.invalidate();
             let outcome = doctor::run(runtime, env, doctor::DOCTOR_TIMEOUT);
-            let token = match &outcome {
-                DoctorOutcome::Report { report, .. } => {
-                    recover::token_for_report(&auth.recovery, generation, report)
-                }
-                _ => None,
+            let (token, transaction_clear) = match &outcome {
+                DoctorOutcome::Report { report, .. } => (
+                    recover::token_for_report(&auth.recovery, generation, report),
+                    report
+                        .get("transaction")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("clear"),
+                ),
+                _ => (None, true),
             };
-            if token.is_some() {
+            if !transaction_clear {
+                // A pending or unsafe transaction area withdraws any apply
+                // authorization (the core would refuse anyway).
                 auth.plans.invalidate();
             }
             (outcome, token)
@@ -255,7 +261,24 @@ async fn read_catalog(app: tauri::AppHandle) -> CommandRun<CatalogOutcome> {
     .await
 }
 
+/// Load DLLs by name only from System32: a DLL planted next to an unzipped
+/// portable copy is never picked up by a dynamic load either.
+#[cfg(windows)]
+fn restrict_dll_search() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetDefaultDllDirectories(flags: u32) -> i32;
+    }
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
+    // SAFETY: plain Win32 call with a constant flag; failure leaves defaults.
+    unsafe {
+        SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
+    }
+}
+
 fn main() {
+    #[cfg(windows)]
+    restrict_dll_search();
     tauri::Builder::default()
         .manage(Arc::new(Authorizations::default()))
         .on_window_event(|_window, event| {

@@ -70,6 +70,8 @@ struct Response {
     home: Option<String>,
     components: Vec<Component>,
     unmanaged: serde_json::Value,
+    #[serde(default)]
+    error: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -81,6 +83,9 @@ pub enum CatalogOutcome {
         components: Vec<Component>,
         unmanaged: Unmanaged,
     },
+    /// The core reported its own error (e.g. an unreadable home).
+    #[serde(rename_all = "camelCase")]
+    CatalogError { code: String, message: String },
     /// The catalog could not be read or its answer cannot be trusted.
     Transport(Transport),
 }
@@ -104,9 +109,19 @@ pub fn run(runtime: &Runtime, env: &[(String, OsString)]) -> CatalogOutcome {
     }
 }
 
+/// Printable text only: no control, bidi-override or zero-width characters
+/// (the core sanitizes; Rust re-checks before anything reaches the webview).
+fn printable(text: &str) -> bool {
+    !text.chars().any(|c| {
+        c.is_control()
+            || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+    })
+}
+
 fn short(text: &Option<String>) -> bool {
     text.as_ref()
-        .map_or(true, |t| t.chars().count() <= MAX_TEXT)
+        .map_or(true, |t| t.chars().count() <= MAX_TEXT && printable(t))
 }
 
 fn managed_path(path: &str, roots: &[&str]) -> bool {
@@ -115,10 +130,12 @@ fn managed_path(path: &str, roots: &[&str]) -> bool {
 
 fn valid_folder(folder: &Folder) -> bool {
     folder.entries.len() <= MAX_ENTRIES
-        && folder
-            .entries
-            .iter()
-            .all(|e| !e.name.is_empty() && e.name.chars().count() <= 64 && short(&e.description))
+        && folder.entries.iter().all(|e| {
+            !e.name.is_empty()
+                && e.name.chars().count() <= 64
+                && printable(&e.name)
+                && short(&e.description)
+        })
 }
 
 /// Pure contract check of `catalog.py --format json`.
@@ -138,8 +155,26 @@ pub fn classify(exited: &Exited) -> CatalogOutcome {
         Ok(response) => response,
         Err(error) => return mismatch(&format!("unexpected catalog shape: {error}")),
     };
+    if code == 1 && response.status == "error" {
+        let error = response.error.unwrap_or_default();
+        let field = |key: &str| {
+            error
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let error_code = field("code");
+        if error_code.is_empty() {
+            return mismatch("error exit without error.code");
+        }
+        return CatalogOutcome::CatalogError {
+            code: error_code,
+            message: field("message"),
+        };
+    }
     if code != 0 || response.status != "ok" {
-        return mismatch("the catalog reported an error");
+        return mismatch("exit code inconsistent with status");
     }
     let Some(home) = response.home else {
         return mismatch("home missing");
@@ -262,6 +297,14 @@ mod tests {
             ),
             ("/unmanaged/claude", json!(null)),
             ("/components", json!([])),
+            (
+                "/unmanaged/claude/skills/entries/0/name",
+                json!("evil\u{202e}txt"),
+            ),
+            (
+                "/unmanaged/codex/skills/entries/0/description",
+                json!("bell\u{7}"),
+            ),
         ] {
             let mut value = body();
             *value.pointer_mut(pointer).unwrap() = replacement.clone();
@@ -270,8 +313,15 @@ mod tests {
                 "{pointer} = {replacement}"
             );
         }
-        // An error exit is never a catalog.
+        // An error exit is never a catalog; a core error is reported as such.
         assert!(is_mismatch(classify(&exited(1, &body()))));
+        let error = json!({"schemaVersion": 1, "product": "SYNCODE", "status": "error",
+            "home": null, "components": [], "unmanaged": {},
+            "error": {"type": "OSError", "code": "io-error", "message": "denied"}});
+        assert!(matches!(
+            classify(&exited(1, &error)),
+            CatalogOutcome::CatalogError { ref code, .. } if code == "io-error"
+        ));
     }
 
     #[test]

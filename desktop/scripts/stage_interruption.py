@@ -14,14 +14,20 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import tempfile
 
 
 def main() -> int:
     scripts, home = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     writes = int(sys.argv[3]) if len(sys.argv) > 3 else 2
     profile = Path(os.environ.get("USERPROFILE") or Path.home()).resolve()
-    if home == profile or profile.is_relative_to(home):
-        print("refusing to touch the real user profile", file=sys.stderr)
+    temp_roots = [Path(tempfile.gettempdir()).resolve()]
+    if os.environ.get("RUNNER_TEMP"):
+        temp_roots.append(Path(os.environ["RUNNER_TEMP"]).resolve())
+    inside_temp = any(home != root and home.is_relative_to(root) for root in temp_roots)
+    if home == profile or profile.is_relative_to(home) or not inside_temp:
+        print("refusing: the home must be a disposable folder under the temp directory",
+              file=sys.stderr)
         return 2
     sys.path.insert(0, str(scripts))
     import sync  # noqa: PLC0415 - from the bundle given on the command line

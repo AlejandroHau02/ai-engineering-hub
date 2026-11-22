@@ -103,6 +103,25 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(data["unmanaged"]["claude"]["skills"]["entries"],
                          [{"name": "linked", "link": True, "description": None}])
 
+    def test_toml_descriptions_keep_accents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / ".codex/agents"
+            folder.mkdir(parents=True)
+            (folder / "revisor.toml").write_text(
+                'description = "Revisi\u00f3n de c\u00f3digo \\"segura\\""\n', encoding="utf-8")
+            _, data = run_json(["--home", tmp, "--format", "json"])
+        self.assertEqual(data["unmanaged"]["codex"]["agents"]["entries"][0]["description"],
+                         'Revisi\u00f3n de c\u00f3digo "segura"')
+
+    @unittest.skipUnless(os.name == "nt", "junctions are a Windows feature")
+    def test_linked_client_folder_is_not_listed(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            (Path(outside) / "skills" / "elsewhere").mkdir(parents=True)
+            subprocess.run(["cmd", "/C", "mklink", "/J", str(Path(tmp) / ".claude"), outside],
+                           check=True, capture_output=True)
+            _, data = run_json(["--home", tmp, "--format", "json"])
+        self.assertEqual(data["unmanaged"]["claude"]["skills"]["entries"], [])
+
     def test_entry_count_is_capped(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp) / ".agents/skills"
