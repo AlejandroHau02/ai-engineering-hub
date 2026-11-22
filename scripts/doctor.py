@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
-import argparse
-import json
 from pathlib import Path
 import shutil
 import sys
 
+from cli_contract import (
+    ArgumentContractError, ContractArgumentParser, SCHEMA_VERSION, PRODUCT, emit_json,
+    error_object, resolve_home, wants_json,
+)
 from specialists import files_for_target
 from sync import BASELINES, END, ROOT, SKILLS, START, ensure_safe, global_block
 from transaction import LOCK_FILE, LOCK_MARKER, WORK_DIR
@@ -131,24 +133,54 @@ def inspect(home: Path, targets: tuple[str, ...]) -> dict:
     }
 
 
+def _error_response(error: BaseException, home: Path | None, targets) -> dict:
+    """Doctor's schemaVersion 1 error shape.
+
+    ``error`` stays a human-readable string for compatibility; the stable code
+    is the additive sibling ``errorCode`` (sync/remove use ``error.code``).
+    """
+    detail = error_object(error)
+    return {
+        "schemaVersion": SCHEMA_VERSION, "product": PRODUCT, "status": "error",
+        "home": None if home is None else str(home), "targets": list(targets),
+        "error": detail["message"], "errorCode": detail["code"],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("both", "claude", "codex"), default="both")
-    parser.add_argument("--home", type=Path, default=Path.home())
-    parser.add_argument("--format", choices=("text", "json"), default="text")
-    args = parser.parse_args(argv)
-    targets = ("claude", "codex") if args.target == "both" else (args.target,)
+    json_mode = wants_json(argv)
+    home: Path | None = None
+    targets: tuple[str, ...] = ()
     try:
-        report = inspect(args.home, targets)
-    except (OSError, UnicodeError, ValueError) as error:
-        if args.format == "json":
-            print(json.dumps({"schemaVersion": 1, "product": "SYNCODE",
-                              "status": "error", "error": str(error)}, ensure_ascii=False))
+        parser = ContractArgumentParser(description=__doc__, json_errors=json_mode)
+        parser.add_argument("--target", choices=("both", "claude", "codex"), default="both")
+        parser.add_argument("--home", type=Path, default=None)
+        parser.add_argument("--format", choices=("text", "json"), default="text")
+        args = parser.parse_args(argv)
+        json_mode = args.format == "json"
+        targets = ("claude", "codex") if args.target == "both" else (args.target,)
+        home = resolve_home(args.home)
+        report = inspect(home, targets)
+    except (OSError, UnicodeError, ValueError, ArgumentContractError) as error:
+        if json_mode:
+            emit_json(_error_response(error, home, targets))
         else:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    if args.format == "json":
-        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    except KeyboardInterrupt as error:
+        if not json_mode:
+            raise
+        emit_json(_error_response(error, home, targets))
+        return 130
+    except Exception as error:  # noqa: BLE001 - contract boundary
+        if not json_mode:
+            raise
+        print(f"ERROR: unexpected {type(error).__name__}; rerun without --format json "
+              "for a traceback", file=sys.stderr)
+        emit_json(_error_response(error, home, targets))
+        return 1
+    if json_mode:
+        emit_json(report)
     else:
         print(f"SYNCODE Doctor | home={report['home']}")
         print(f"Transaction: {report['transaction']} | lock: {report['lock']}")

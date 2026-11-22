@@ -19,8 +19,14 @@ import tempfile
 
 from specialists import files_for_target
 from approved_installer import approved_candidates
+from cli_contract import (
+    ArgumentContractError, ContractArgumentParser, SyncodeError, emit_json, envelope,
+    error_object, resolve_home, wants_json,
+)
 from path_safety import is_link_or_reparse
-from transaction import TransactionError, WORK_DIR, apply_transaction, recover
+from transaction import (
+    TransactionError, TransactionReport, WORK_DIR, apply_transaction, recover,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
@@ -40,16 +46,19 @@ class Change:
 def ensure_safe(path: Path, home: Path) -> None:
     """Never write through symlinks or into non-directory parents."""
     if not path.is_relative_to(home):
-        raise ValueError(f"Destination is outside home: {path}")
+        raise SyncodeError(f"Destination is outside home: {path}", code="unsafe-path")
     current = path
     while current != home:
         if is_link_or_reparse(current):
-            raise ValueError(f"Symlink or junction destination is not allowed: {current}")
+            raise SyncodeError(
+                f"Symlink or junction destination is not allowed: {current}",
+                code="unsafe-path",
+            )
         if current != path and current.exists() and not current.is_dir():
-            raise ValueError(f"Parent is not a directory: {current}")
+            raise SyncodeError(f"Parent is not a directory: {current}", code="unsafe-path")
         current = current.parent
     if path.exists() and not path.is_file():
-        raise ValueError(f"Expected a regular file: {path}")
+        raise SyncodeError(f"Expected a regular file: {path}", code="unsafe-path")
 
 
 def global_block(target: str) -> str:
@@ -62,14 +71,17 @@ def merge_block(existing: str, block: str) -> str:
     count_start = existing.count(START)
     count_end = existing.count(END)
     if count_start != count_end or count_start > 1:
-        raise ValueError("Malformed/repeated managed markers; review manually")
+        raise SyncodeError(
+            "Malformed/repeated managed markers; review manually",
+            code="managed-markers-invalid",
+        )
     if not count_start:
         spacer = "\n\n" if existing and not existing.endswith("\n") else ("\n" if existing.strip() else "")
         return existing + spacer + block
     start = existing.index(START)
     end = existing.index(END)
     if end < start:
-        raise ValueError("Managed markers are out of order")
+        raise SyncodeError("Managed markers are out of order", code="managed-markers-invalid")
     return existing[:start] + block.rstrip("\n") + existing[end + len(END):]
 
 
@@ -96,15 +108,17 @@ def build_plan(
                 if existing_skill == new_content:
                     continue
                 if not upgrade_skills:
-                    raise ValueError(
+                    raise SyncodeError(
                         f"Skill update available at {dest}; preview with --upgrade-skills "
-                        "(no files were written)"
+                        "(no files were written)",
+                        code="skill-upgrade-available",
                     )
                 baseline = BASELINES / skill / "SKILL.md"
                 if not baseline.is_file() or existing_skill != baseline.read_text(encoding="utf-8"):
-                    raise ValueError(
+                    raise SyncodeError(
                         f"Unrecognized or locally modified skill: {dest}; "
-                        "manual review required (no files were written)"
+                        "manual review required (no files were written)",
+                        code="skill-modified",
                     )
                 changes.append(Change(dest, new_content, "UPGRADE", existing_skill))
                 continue
@@ -112,9 +126,10 @@ def build_plan(
                 # An already-existing skill directory may contain personal
                 # assets or a different skill. Never blend Hub content into it
                 # merely because SKILL.md has not been created.
-                raise ValueError(
+                raise SyncodeError(
                     f"First-party skill directory already exists: {dest.parent}; "
-                    "manual review required (no files were written)"
+                    "manual review required (no files were written)",
+                    code="destination-conflict",
                 )
             changes.append(Change(dest, new_content, "CREATE"))
         if include_specialists:
@@ -123,9 +138,10 @@ def build_plan(
                 ensure_safe(agent_dest, home)
                 if agent_dest.exists():
                     if agent_dest.read_text(encoding="utf-8") != agent_content:
-                        raise ValueError(
+                        raise SyncodeError(
                             f"Specialist conflict: {agent_dest} differs; "
-                            "manual review required (no files were written)"
+                            "manual review required (no files were written)",
+                            code="destination-conflict",
                         )
                     continue
                 changes.append(Change(agent_dest, agent_content, "CREATE"))
@@ -139,17 +155,22 @@ def build_plan(
                 # A pre-existing skill directory is user-owned. Only allow
                 # idempotence for the exact, standalone SKILL.md and no extras.
                 if not dest.is_file():
-                    raise ValueError(
+                    raise SyncodeError(
                         f"Approved skill directory already exists: {dest.parent}; "
-                        "no files were written"
+                        "no files were written",
+                        code="destination-conflict",
                     )
                 if {entry.name for entry in dest.parent.iterdir()} != {"SKILL.md"}:
-                    raise ValueError(
+                    raise SyncodeError(
                         f"Approved skill directory contains other files: {dest.parent}; "
-                        "no files were written"
+                        "no files were written",
+                        code="destination-conflict",
                     )
                 if dest.read_bytes() != approved_content.encode("utf-8"):
-                    raise ValueError(f"Approved skill conflict: {dest}; no files were written")
+                    raise SyncodeError(
+                        f"Approved skill conflict: {dest}; no files were written",
+                        code="destination-conflict",
+                    )
                 continue
             changes.append(Change(dest, approved_content, "APPROVED-CREATE"))
     return changes
@@ -160,12 +181,18 @@ def verify_change(change: Change, home: Path) -> None:
     ensure_safe(change.path, home)
     if change.expected is None:
         if change.path.exists():
-            raise ValueError(f"Destination appeared since planning: {change.path}")
+            raise SyncodeError(
+                f"Destination appeared since planning: {change.path}",
+                code="destination-changed",
+            )
     elif (
         not change.path.exists()
         or change.path.read_text(encoding="utf-8") != change.expected
     ):
-        raise ValueError(f"Destination changed since planning: {change.path}")
+        raise SyncodeError(
+            f"Destination changed since planning: {change.path}",
+            code="destination-changed",
+        )
 
 
 def write_with_backup(change: Change, home: Path, create_backup: bool = True) -> None:
@@ -199,17 +226,36 @@ def write_with_backup(change: Change, home: Path, create_backup: bool = True) ->
             temp_path.unlink()
 
 
-def _run_operation(args, home: Path, targets: tuple[str, ...]) -> tuple[str, list[Change]]:
-    """Keep legacy text output and the safe sync workflow unchanged."""
+def _workspace_present(home: Path) -> bool | None:
+    """Ground truth for ``recoveryRequired``; None when it cannot be determined."""
+    try:
+        return (home / WORK_DIR).exists() or is_link_or_reparse(home / WORK_DIR)
+    except (OSError, ValueError):
+        return None
+
+
+def _run_operation(args, home: Path, targets: tuple[str, ...], report: TransactionReport,
+                   planned: list[Change]) -> str:
+    """Keep legacy text output and the safe sync workflow unchanged.
+
+    ``planned`` receives the plan before any write so a failed apply can still
+    report what was attempted; ``report.outcome`` describes the destinations.
+    """
     if args.recover:
+        # Until recovery finishes, a preserved journal means the destinations
+        # may be partially applied.
+        if _workspace_present(home):
+            report.outcome = "recovery-pending"
         recovered = recover(home, ensure_safe)
+        report.outcome = recovered or "not-started"
         print("RECOVERED" if recovered else "NO PENDING TRANSACTION")
-        return ("recovered" if recovered else "no-pending-transaction"), []
+        return "recovered" if recovered else "no-pending-transaction"
 
     if (home / WORK_DIR).exists() or is_link_or_reparse(home / WORK_DIR):
         raise TransactionError(
             "Unfinished installation transaction; inspect and run sync.py --recover "
-            "before planning new changes"
+            "before planning new changes",
+            code="transaction-pending",
         )
     changes = build_plan(
         home, targets,
@@ -217,24 +263,26 @@ def _run_operation(args, home: Path, targets: tuple[str, ...]) -> tuple[str, lis
         include_specialists=args.specialists,
         include_approved_skills=args.approved_skills,
     )
+    planned[:] = changes
     if not changes:
         print("NO CHANGES")
-        return "unchanged", []
+        return "unchanged"
     for change in changes:
         mode = "APPLY" if args.apply else "DRY-RUN"
         digest = (f" sha256={hashlib.sha256(change.content.encode('utf-8')).hexdigest()}"
                   if change.kind == "APPROVED-CREATE" else "")
         print(f"{mode} {change.kind} {change.path}{digest}")
     if args.apply:
-        apply_transaction(changes, home, verify_change, write_with_backup, ensure_safe)
+        apply_transaction(changes, home, verify_change, write_with_backup, ensure_safe,
+                          report=report)
         print(f"Applied {len(changes)} file change(s) transactionally.")
-        return "applied", changes
+        return "applied"
     print("Preview only; nothing changed. Use --apply after review.")
-    return "planned", changes
+    return "planned"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def _parser(json_errors: bool) -> ContractArgumentParser:
+    parser = ContractArgumentParser(description=__doc__, json_errors=json_errors)
     parser.add_argument("--target", choices=("both", "claude", "codex"), default="both")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--apply", action="store_true", help="Write files explicitly")
@@ -251,50 +299,74 @@ def main(argv: list[str] | None = None) -> int:
         "--approved-skills", action="store_true",
         help="Include manually approved standalone third-party skills; dry-run unless --apply",
     )
-    parser.add_argument("--home", type=Path, default=Path.home(), help="Override home for testing")
+    # Resolved inside the error-handled section so an unusable home is reported
+    # through the contract instead of a traceback.
+    parser.add_argument("--home", type=Path, default=None,
+                        help="Override home for testing (default: user home)")
     parser.add_argument(
         "--format", choices=("text", "json"), default="text",
         help="Machine-readable JSON contract for plans, results and errors",
     )
-    args = parser.parse_args(argv)
-    home = args.home.expanduser().resolve()
-    targets = ("claude", "codex") if args.target == "both" else (args.target,)
+    return parser
 
-    # Capture any installer/backups progress so JSON stdout is one complete
-    # object even on a failed or interrupted transaction. Default text output
-    # is unchanged for CLI users and existing scripts.
-    buffer = io.StringIO()
-    context = redirect_stdout(buffer) if args.format == "json" else nullcontext()
-    changes: list[Change] = []
+
+def main(argv: list[str] | None = None) -> int:
+    json_mode = wants_json(argv)
+    home: Path | None = None
+    targets: tuple[str, ...] = ()
+    planned: list[Change] = []
+    report = TransactionReport()
     status = "error"
-    error = None
+    error: BaseException | None = None
+    buffer = io.StringIO()
     try:
+        args = _parser(json_mode).parse_args(argv)
+        json_mode = args.format == "json"
+        targets = ("claude", "codex") if args.target == "both" else (args.target,)
+        home = resolve_home(args.home)
+        # Capture any installer/backups progress so JSON stdout is one complete
+        # object even on a failed or interrupted transaction. Default text
+        # output is unchanged for CLI users and existing scripts.
+        context = redirect_stdout(buffer) if json_mode else nullcontext()
         with context:
-            status, changes = _run_operation(args, home, targets)
-    except (OSError, UnicodeError, ValueError) as failure:
+            status = _run_operation(args, home, targets, report, planned)
+    except (OSError, UnicodeError, ValueError, ArgumentContractError) as failure:
         error = failure
-        if args.format == "text":
+        if not json_mode:
             print(f"ERROR: {failure}", file=sys.stderr)
+    except KeyboardInterrupt as failure:
+        if not json_mode:
+            raise
+        error = failure
+    except Exception as failure:  # noqa: BLE001 - contract boundary
+        if not json_mode:
+            raise
+        error = failure
+        print(f"ERROR: unexpected {type(failure).__name__}; rerun without --format json "
+              "for a traceback", file=sys.stderr)
 
-    if args.format == "json":
-        print(json.dumps({
-            "schemaVersion": 1,
-            "product": "SYNCODE",
-            "status": status,
-            "home": str(home),
-            "targets": list(targets),
-            "changes": [
+    if json_mode:
+        if error is not None:
+            status = "error"
+        emit_json(envelope(
+            status,
+            home=None if home is None else str(home),
+            targets=list(targets),
+            changes=[
                 {"kind": change.kind,
                  "path": change.path.relative_to(home).as_posix(),
                  "sha256": hashlib.sha256(change.content.encode("utf-8")).hexdigest()}
-                for change in changes
-            ],
-            "events": buffer.getvalue().splitlines(),
-            "error": None if error is None else {
-                "type": type(error).__name__,
-                "message": str(error),
+                for change in planned
+            ] if home is not None else [],
+            events=buffer.getvalue().splitlines(),
+            transaction={
+                "outcome": report.outcome,
+                "recoveryRequired": None if home is None else _workspace_present(home),
             },
-        }, ensure_ascii=False, sort_keys=True))
+            error=None if error is None else error_object(error),
+        ))
+    if isinstance(error, KeyboardInterrupt):
+        return 130
     return 1 if error is not None else 0
 
 

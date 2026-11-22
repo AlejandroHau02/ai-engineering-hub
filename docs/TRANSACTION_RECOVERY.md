@@ -11,6 +11,18 @@ Las aplicaciones de `scripts/sync.py --apply` utilizan `scripts/transaction.py`,
 5. **Respaldos convencionales:** después de completar las escrituras, publica respaldos `*.bak.<timestamp>-<token>` de los archivos reemplazados; la publicación del backup es exclusiva y se evita escribir respaldos finales a medias.
 6. **Interrupción abrupta:** el journal persistente permite reanudar la recuperación en una nueva ejecución, a petición explícita.
 
+## Punto de commit y resultados verificables
+
+El **punto de commit** es la sustitución atómica del journal con estado `committed`, después de escribir y verificar todos los destinos y publicar los respaldos. A partir de ahí el lote **nunca se revierte**:
+
+- Si falla la eliminación del workspace, se reintenta una vez; si persiste, el comando informa `error.code: "cleanup-failed"` con `transaction.outcome: "committed"` y conserva el journal. `sync.py --recover` solo termina la limpieza y conserva los archivos instalados y sus respaldos. **No reapliques** en ese estado.
+- Si el error ocurre dentro de la misma escritura del journal, después de la sustitución atómica (por ejemplo, al sincronizar el directorio en POSIX), el resultado es también `committed`.
+- Tras un rollback completo, el journal se marca `rolled-back` antes de borrar los snapshots; si la limpieza se interrumpe, `--recover` solo la termina.
+- La limpieza borra el journal en último lugar. Un workspace vacío (o con solo `journal.json.tmp`) se elimina con `--recover` (`outcome: unknown`); con cualquier otro contenido sin journal, la recuperación se bloquea.
+- Si falla el registro del primer journal, no se escribió ningún destino: el workspace recién creado se elimina para no bloquear futuras operaciones.
+
+En modo `--format json`, `transaction.outcome` distingue `not-started`, `rolled-back`, `committed` y `recovery-pending`, y `transaction.recoveryRequired` indica si el workspace sigue en disco. Ver [contratos CLI](SYNCODE_CLI_CONTRACT.md).
+
 ## Comandos
 
 Revisar un plan sin cambios:
