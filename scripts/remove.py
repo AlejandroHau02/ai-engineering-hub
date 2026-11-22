@@ -106,7 +106,12 @@ def remove(home: Path, candidate: Candidate, *, apply: bool) -> tuple[str, Path 
         if source is None:
             return "unchanged", None
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        backup = source.with_name(source.name + f".removed.{stamp}-{token_hex(12)}")
+        # Never retain backups underneath skills/ or agents/: native clients
+        # may recursively discover SKILL.md regardless of directory basename.
+        # Move one level above the discovery root, on the same filesystem.
+        backup = source.parent.parent / (
+            f"{source.parent.name}-{source.name}.removed.{stamp}-{token_hex(12)}"
+        )
         # Validate both source and backup parents, including reparse points.
         ensure_safe(backup / ".probe" if candidate.is_skill else backup, home)
         if backup.exists() or is_link_or_reparse(backup):
