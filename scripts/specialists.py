@@ -10,8 +10,11 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "specialists" / "catalog.json"
+# Must equal sync.SKILLS (tests/test_specialists.py guards the drift; importing
+# sync here would be circular).
 KNOWN_SKILLS = frozenset(
-    {"architecture-review", "ux-ui", "backend-engineering", "code-review"}
+    {"architecture-review", "ux-ui", "backend-engineering", "code-review",
+     "application-security-audit"}
 )
 NAME_RE = re.compile(r"hub-[a-z][a-z0-9-]{0,48}\Z")
 SPEC_KEYS = frozenset({"name", "description", "skill", "focus", "deliverable"})

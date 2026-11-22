@@ -35,7 +35,7 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(report["product"], "SYNCODE")
         self.assertEqual(report["transaction"], "clear")
         self.assertEqual(report["summary"]["current"], 0)
-        self.assertEqual(report["summary"]["missing"], 20)
+        self.assertEqual(report["summary"]["missing"], 22)  # 2 clients x (instructions + 5 skills + 5 specialists)
         self.assertEqual(set(report["clients"]), {"claude", "codex"})
         self.assertEqual(list(self.home.iterdir()), [])
 
@@ -43,7 +43,7 @@ class DoctorTests(unittest.TestCase):
         applied = self.cli(SYNC, "--target", "both", "--specialists", "--apply")
         self.assertEqual(applied.returncode, 0, applied.stderr)
         report = inspect(self.home, ("claude", "codex"))
-        self.assertEqual(report["summary"]["current"], 20)
+        self.assertEqual(report["summary"]["current"], 22)
         self.assertEqual(report["summary"]["blockers"], 0)
         self.assertEqual(report["lock"], "recognized")
         self.assertEqual(report["transaction"], "clear")

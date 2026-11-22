@@ -68,6 +68,7 @@ def run(resources: Path, keep: bool = False, in_place: bool = False) -> dict:
     resources = resources.resolve()
     for required in ("python/python.exe", "python/python312._pth",
                      "syncode/scripts/doctor.py", "syncode/scripts/sync.py",
+                     "syncode/scripts/catalog.py",
                      "syncode/BUNDLE_MANIFEST.json"):
         if not (resources / required).is_file():
             raise SystemExit(f"Runtime not staged: missing {required}; run stage_runtime.py")
@@ -112,6 +113,10 @@ def run(resources: Path, keep: bool = False, in_place: bool = False) -> dict:
                                   "--target", "both", "--specialists", "--format", "json"],
                                  **common)
         plan = json.loads(preview.stdout)
+        catalog_run = subprocess.run([str(python), "-I", "-B",
+                                      str(app / "syncode" / "scripts" / "catalog.py"),
+                                      "--format", "json"], **common)
+        listing = json.loads(catalog_run.stdout)
 
         runtime_root = str(app).lower()
         problems = []
@@ -138,10 +143,12 @@ def run(resources: Path, keep: bool = False, in_place: bool = False) -> dict:
             problems.append(f"preview exit {preview.returncode} status {plan.get('status')}")
         if plan.get("transaction", {}).get("outcome") != "not-started":
             problems.append("preview reported a transaction outcome")
-        if len(plan.get("changes", [])) != 20:
-            problems.append(f"preview planned {len(plan.get('changes', []))} changes, expected 20")
+        if len(plan.get("changes", [])) != 22:  # 2 clients x (instructions + 5 skills + 5 specialists)
+            problems.append(f"preview planned {len(plan.get('changes', []))} changes, expected 22")
+        if catalog_run.returncode != 0 or listing.get("status") != "ok" or                 len(listing.get("components", [])) != 10:
+            problems.append(f"catalog exit {catalog_run.returncode} status {listing.get('status')}")
         if list(home.iterdir()):
-            problems.append("doctor or preview wrote into the home directory")
+            problems.append("doctor, preview or catalog wrote into the home directory")
         evidence = {
             "ok": not problems, "problems": problems,
             "runtimeOutsideRepo": str(app),
@@ -154,6 +161,8 @@ def run(resources: Path, keep: bool = False, in_place: bool = False) -> dict:
                         "changes": len(plan.get("changes", [])),
                         "kinds": sorted({c.get("kind") for c in plan.get("changes", [])}),
                         "outcome": plan.get("transaction", {}).get("outcome")},
+            "catalog": {"exitCode": catalog_run.returncode, "status": listing.get("status"),
+                        "components": len(listing.get("components", []))},
         }
         return evidence
     finally:

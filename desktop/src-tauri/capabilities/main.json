@@ -1,14 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Main window: read-only run_doctor and preview_sync, plus discard_plan and apply_sync (single-use bound apply). No core plugins, shell, fs or network.",
+  "description": "Main window: read-only run_doctor, preview_sync and read_catalog; discard_plan; single-use apply_sync and recover_transaction. No core plugins, shell, fs or network.",
   "windows": [
     "main"
   ],
   "permissions": [
     "allow-run-doctor",
     "allow-preview-sync",
+    "allow-read-catalog",
     "allow-discard-plan",
-    "allow-apply-sync"
+    "allow-apply-sync",
+    "allow-recover-transaction"
   ]
 }

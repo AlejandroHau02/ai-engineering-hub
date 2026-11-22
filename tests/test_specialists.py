@@ -27,13 +27,14 @@ class SpecialistsTests(unittest.TestCase):
             text=True, capture_output=True, check=False,
         )
 
-    def test_catalog_has_four_unique_known_skills(self):
+    def test_catalog_has_five_unique_known_skills(self):
         entries = read_catalog()
-        self.assertEqual(len(entries), 4)
-        self.assertEqual(len({x["name"] for x in entries}), 4)
+        self.assertEqual(len(entries), 5)
+        self.assertEqual(len({x["name"] for x in entries}), 5)
         self.assertEqual(
             {x["skill"] for x in entries},
-            {"ux-ui", "backend-engineering", "architecture-review", "code-review"},
+            {"ux-ui", "backend-engineering", "architecture-review", "code-review",
+             "application-security-audit"},
         )
 
     def test_native_codex_files_are_valid_toml(self):
@@ -78,11 +79,11 @@ class SpecialistsTests(unittest.TestCase):
         self.assertIn(".codex", result.stdout)
         self.assertEqual(list(self.home.iterdir()), [])
 
-    def test_apply_installs_eight_and_is_idempotent(self):
+    def test_apply_installs_ten_and_is_idempotent(self):
         applied = self.sync("--target", "both", "--specialists", "--apply")
         self.assertEqual(applied.returncode, 0, applied.stderr)
-        self.assertEqual(len(list((self.home / ".claude/agents").glob("*.md"))), 4)
-        self.assertEqual(len(list((self.home / ".codex/agents").glob("*.toml"))), 4)
+        self.assertEqual(len(list((self.home / ".claude/agents").glob("*.md"))), 5)
+        self.assertEqual(len(list((self.home / ".codex/agents").glob("*.toml"))), 5)
         again = self.sync("--target", "both", "--specialists")
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertIn("NO CHANGES", again.stdout)
@@ -137,3 +138,25 @@ class SpecialistsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CatalogConsistencyTests(unittest.TestCase):
+    """Phase 3: the specialist catalog and the first-party skills stay aligned."""
+
+    def test_known_skills_match_the_installer(self):
+        import sync  # noqa: PLC0415
+        from specialists import KNOWN_SKILLS  # noqa: PLC0415
+        self.assertEqual(set(KNOWN_SKILLS), set(sync.SKILLS))
+
+    def test_every_skill_has_a_read_only_specialist(self):
+        import sync  # noqa: PLC0415
+        import transaction  # noqa: PLC0415
+        catalog = read_catalog()
+        self.assertEqual({entry["skill"] for entry in catalog}, set(sync.SKILLS))
+        for target in ("claude", "codex"):
+            for relative, content in files_for_target(target).items():
+                self.assertTrue(transaction.AGENT_RE.fullmatch(relative.name), relative)
+                if target == "claude":
+                    self.assertIn("tools: Read, Glob, Grep\n", content)
+                    self.assertIn("permissionMode: plan\n", content)
+                    self.assertNotRegex(content, r"(?m)^tools:.*\b(Edit|Write|Bash)\b")

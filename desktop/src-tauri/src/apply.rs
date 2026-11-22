@@ -121,7 +121,7 @@ impl PlanStore {
 }
 
 /// `plan-` + 32 lowercase hex characters (128 bits from the OS CSPRNG).
-fn new_token() -> Option<String> {
+pub(crate) fn new_token() -> Option<String> {
     let mut bytes = [0u8; TOKEN_BYTES];
     getrandom::fill(&mut bytes).ok()?;
     Some(format!(
@@ -132,7 +132,7 @@ fn new_token() -> Option<String> {
 
 /// Constant-time comparison (the token is not secret from the webview, but
 /// this keeps the check independent of where the strings differ).
-fn same_token(a: &str, b: &str) -> bool {
+pub(crate) fn same_token(a: &str, b: &str) -> bool {
     a.len() == b.len()
         && a.bytes()
             .zip(b.bytes())
@@ -966,7 +966,7 @@ mod tests {
                 verified, changes, ..
             } => {
                 assert!(verified);
-                assert_eq!(changes.len(), 20);
+                assert_eq!(changes.len(), 22);
             }
             other => panic!("unexpected {other:?}"),
         }

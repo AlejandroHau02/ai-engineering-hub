@@ -96,7 +96,7 @@ class StageCoreTests(unittest.TestCase):
         """Every SYNCODE module Doctor imports transitively is staged."""
         scripts = REPO / "scripts"
         local = {p.stem for p in scripts.glob("*.py")}
-        seen, todo = set(), ["doctor"]
+        seen, todo = set(), ["doctor", "sync", "catalog"]
         while todo:
             name = todo.pop()
             if name in seen:

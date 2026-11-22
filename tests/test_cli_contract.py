@@ -88,7 +88,7 @@ class EncodingTests(ContractTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         report = self.parse(result)
         self.assertEqual(Path(report["home"]).name, UNICODE_NAME)
-        self.assertEqual(report["summary"]["missing"], 20)
+        self.assertEqual(report["summary"]["missing"], 22)
 
     def test_sync_plan_and_apply_json_with_unicode_home_under_cp1252(self):
         plan = self.cli("sync.py", "--target", "claude", "--home", str(self.uhome),

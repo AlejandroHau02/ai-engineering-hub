@@ -277,3 +277,22 @@ h2[tabindex="-1"]:focus-visible { outline: 2px solid var(--focus); outline-offse
   #apply-dialog::backdrop { background: Canvas; opacity: 0.6; }
   .recovery, code.command { border: 1px solid CanvasText; }
 }
+
+/* Catálogo and Recover (Phase 3) */
+.components { list-style: none; margin: 0 0 20px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.component { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.component h3 { font-family: var(--mono); font-size: 14.5px; overflow-wrap: anywhere; }
+.component .summary { margin: 0; }
+.component .note { margin: 0; }
+.client-status { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.more summary, details.others > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.more dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; margin: 8px 0 0; }
+.more dt { color: var(--muted); }
+.more dd { margin: 0; overflow-wrap: anywhere; }
+.more ul { margin: 0; padding-left: 18px; }
+details.others { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 16px; margin-bottom: 10px; }
+details.others > summary { font-size: 14px; color: var(--text); font-weight: 600; }
+.meta-line { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+#screen-catalogo h2 { margin: 18px 0 4px; }
+.recover-action { margin-top: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+#diag-recover-result:empty { display: none; }

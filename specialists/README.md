@@ -18,6 +18,7 @@
 | `hub-backend-auditor` | Seguridad de API, permisos, multitenencia, concurrencia | `backend-engineering` |
 | `hub-architecture-advisor` | Decisiones sobre límites, contratos, escala o migraciones | `architecture-review` |
 | `hub-code-reviewer` | Revisión independiente de cambios materiales | `code-review` |
+| `hub-application-security-auditor` | Auditoría de seguridad de aplicaciones (AppSec), puentes de escritorio y pipelines | `application-security-audit` |
 
 Todos **analizan y recomiendan**; el agente principal toma las decisiones, implementa y coordina las pruebas. No se les asignan tareas de escritura, merge, despliegue ni instalación.
 
@@ -29,7 +30,7 @@ En el checkout de la rama que contiene esta capa:
 python scripts/sync.py --target both --specialists
 ```
 
-Esto es un **dry-run**: no escribe nada. Espera ocho entradas nuevas de especialistas (cuatro por cliente); si las instrucciones globales aún no están sincronizadas, también mostrará sus actualizaciones. Revisa cada ruta. Tras aprobarlo:
+Esto es un **dry-run**: no escribe nada. Espera diez entradas nuevas de especialistas (cinco por cliente); si las instrucciones globales aún no están sincronizadas, también mostrará sus actualizaciones. Revisa cada ruta. Tras aprobarlo:
 
 ```powershell
 python scripts/sync.py --target both --specialists --apply

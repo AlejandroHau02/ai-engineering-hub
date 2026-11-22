@@ -147,6 +147,28 @@ Los recursos del checkout (`core/`, `adapters/`, `skills/`, `specialists/catalog
 
 **Límites:** el bloqueo es consultivo y no detiene a programas ajenos a SYNCODE (editores, sincronizadores). Entre la reconstrucción y cada escritura se vuelve a comparar por bytes (`destination-changed`) y la instantánea del journal debe coincidir con los bytes planificados, pero persiste una ventana mínima antes del reemplazo atómico de cada archivo. `remove.py` no usa todavía planes vinculantes (es una única operación que ya revalida un hash fijo bajo el bloqueo).
 
+## Catálogo (Fase 3)
+
+```powershell
+python scripts/catalog.py --format json
+```
+
+Solo lectura: sin escrituras, sin red ni subprocesos. Respuesta: `schemaVersion: 1`, `product`, `status` (`ok` o `error`), `home`, `components[]` y `unmanaged`.
+
+- `components[]`: `kind` (`skill` o `specialist`), `name`, `description` y `paths.{claude,codex}`, relativas a home. Los especialistas añaden `skill`, `focus[]` y `deliverable`.
+- `unmanaged.{claude,codex}.{skills,agents}`: `{entries: [{name, link, description}], truncated}`. Son entradas de las carpetas de cada cliente que SYNCODE no gestiona. Límites:
+  - no se siguen enlaces ni junctions;
+  - se leen como mucho 8 KiB por archivo;
+  - nombres de hasta 64 caracteres y descripciones de hasta 200, sin caracteres de control, bidi ni surrogates;
+  - hasta 100 entradas por carpeta y 256 KiB en total.
+- El estado instalado por cliente **no** forma parte de esta respuesta: lo informa Doctor.
+
+Código de salida: `0` correcto; `1` error (incluidos argumentos inválidos en modo JSON).
+
+## Recuperación desde Desktop (Fase 3)
+
+Desktop ejecuta `sync.py --recover --format json` (argv literal) solo con un token emitido por un Doctor que informó `transaction: "pending-recovery"`. La respuesta se clasifica por `status`, `transaction.outcome` y `recoveryRequired`, con `lock-busy` como caso prioritario ([ADR-0010](ADR-0010.md)). Desktop nunca lee ni modifica el journal.
+
 ## Retirada de componentes
 
 ```powershell
@@ -159,6 +181,7 @@ Respuesta: `schemaVersion: 1`, `product`, `status` (`planned`, `unchanged`, `rem
 
 Se mantiene `schemaVersion: 1` porque los cambios son aditivos para los consumidores existentes:
 
+- Fase 3: comando nuevo `catalog.py --format json`, de solo lectura. Sin cambios en `sync.py` ni en Doctor.
 - Fase 2A: opción nueva `--preview` (dry-run explícito, excluyente con `--apply`/`--recover`) y campos nuevos `target` y `component` en `changes[]`. La huella no cambia.
 - Fase 0B: opción nueva `--expect-plan`, objeto nuevo `plan` en la respuesta de sync y código nuevo `stale-plan`. Además, `destination-changed` compara ahora los bytes originales (un cambio solo de saltos de línea entre plan y escritura también se rechaza).
 
