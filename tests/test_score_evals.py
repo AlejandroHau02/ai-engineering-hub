@@ -62,6 +62,28 @@ class ScoreEvalsTests(unittest.TestCase):
         result = self.run_card()
         self.assertNotEqual(result.returncode, 0)
 
+    def test_e05_role_based_authorization_is_scored(self):
+        self.card["scenario"] = "E05"
+        self.card["scores"] = {
+            "operation_authorization": 4, "client_boundary": 4,
+            "minimal_fix": 4, "negative_test": 4,
+        }
+        result = self.run_card()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("100.0%", result.stdout)
+
+    def test_e08_appsec_score_and_critical_failure(self):
+        self.card["scenario"] = "E08"
+        self.card["scores"] = {
+            "threat_model": 2, "findings": 4,
+            "evidence": 3, "remediation": 3,
+        }
+        self.card["critical_failure"] = True
+        result = self.run_card()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("E08", result.stdout)
+        self.assertIn("YES", result.stdout)
+
     def test_unknown_scenario_rejected(self):
         self.card["scenario"] = "E99"
         result = self.run_card()

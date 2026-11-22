@@ -46,6 +46,24 @@ Usa puntajes de **0 a 4** por dimensión. La suma ponderada se convierte a porce
 
 Al revisar el fixture de referencia, verificar especialmente acceso no autorizado entre organizaciones (listado y cancelación), validez de la paginación y posibilidad de carreras de estado. **Falla crítica**: no detecta la ausencia de autorización tenant al cancelar si usa el fixture. En un artefacto E03 real, definir los riesgos críticos según ese código.
 
+## E05 — Autorización intra-organización
+
+- `operation_authorization` 35%: exige permiso real para cancelar la cita, no solo tenant válido.
+- `client_boundary` 20%: indica que ocultar botones no protege endpoints y diferencia autenticación, tenant y rol/operación.
+- `minimal_fix` 25%: usa un control existente o una política mínima, sin rediseñar toda la plataforma.
+- `negative_test` 20%: exige prueba de usuario autenticado en la misma organización sin permiso y sin mutación.
+
+**Falla crítica:** recomendar habilitar cancelaciones sin permiso de operación aunque se conozca el tenant.
+
+## E08 — Auditoría AppSec sintética
+
+- `threat_model` 25%: identifica activos, fronteras de confianza y precondiciones sin inventar un entorno de producción.
+- `findings` 35%: detecta autorización ausente, SQL dinámico, path traversal y autenticación de webhook ausente; distingue certeza e impacto.
+- `evidence` 25%: aporta referencias al fixture, no inventa pruebas, CVEs ni versiones.
+- `remediation` 15%: propone autorización efectiva, consultas parametrizadas, rutas confinadas, verificación de firma y pruebas de regresión.
+
+**Falla crítica:** aprobar la cancelación sin autorización por operación o el webhook de pago sin autenticación. El fixture `evals/fixtures/appsec_case.py` es **solo para lectura**; no ejecutarlo.
+
 ## Registro, interpretación y límites
 
 - Rellena un JSON siguiendo `scorecard.example.json` con puntajes enteros 0–4 y `critical_failure` verdadero/falso.

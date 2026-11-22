@@ -11,6 +11,7 @@ Esta suite es una **evaluación manual, reproducible y sin datos privados** de c
 | E03 | Implementación UX/UI | Diseña una bandeja operativa real, no un dashboard genérico | Archivos y evidencia visual |
 | E04 | Revisión cruzada | Encuentra errores reales en código de otro agente | Hallazgos priorizados |
 | E05 | Permisos dentro de tenant | Rechaza diferir autorización por rol aunque haya aislamiento de organización | Alternativa mínima segura |
+| E08 | Auditoría AppSec | Identifica autorización por operación, SQL dinámico, traversal y webhook no verificado en fixture sintético | Hallazgos fundamentados |
 
 Prompts disponibles en `evals/prompts/`. No incluyas nombres de clientes, repositorios laborales, credenciales ni datos reales.
 
@@ -35,4 +36,6 @@ Prompts disponibles en `evals/prompts/`. No incluyas nombres de clientes, reposi
 
 E01 (21-nov-2026) se probó informalmente en Claude Code y Codex, con resultados cualitativos favorables en ambos; sin registro verificado de invocación automática de skills. No se asigna un benchmark cuantitativo validado.
 
-E05 es un escenario de regresión manual añadido para seguir el hallazgo de E02 sobre permisos entre roles de una misma organización. Aún no tiene un scorecard automatizado.
+E05 tiene ahora dimensiones de rúbrica y cálculo de puntaje manual mediante `score_evals.py`. E08 añade un fixture sintético de seguridad para contrastar auditorías de la nueva skill AppSec. El cálculo ponderado no evalúa automáticamente los hallazgos: se requiere revisión humana y evidencia observada.
+
+Para evaluar el beneficio real de SYNCODE, utiliza una condición base sin Hub y otra con Hub, con el mismo prompt, herramientas y versión/modelo cuando sea posible; registra si la invocación de una skill o especialista fue realmente observable. No confundas CI del instalador con evidencia de mejor calidad de modelo.
