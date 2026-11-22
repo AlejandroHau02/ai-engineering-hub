@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext, redirect_stdout
+import io
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -196,6 +199,40 @@ def write_with_backup(change: Change, home: Path, create_backup: bool = True) ->
             temp_path.unlink()
 
 
+def _run_operation(args, home: Path, targets: tuple[str, ...]) -> tuple[str, list[Change]]:
+    """Keep legacy text output and the safe sync workflow unchanged."""
+    if args.recover:
+        recovered = recover(home, ensure_safe)
+        print("RECOVERED" if recovered else "NO PENDING TRANSACTION")
+        return ("recovered" if recovered else "no-pending-transaction"), []
+
+    if (home / WORK_DIR).exists() or is_link_or_reparse(home / WORK_DIR):
+        raise TransactionError(
+            "Unfinished installation transaction; inspect and run sync.py --recover "
+            "before planning new changes"
+        )
+    changes = build_plan(
+        home, targets,
+        upgrade_skills=args.upgrade_skills,
+        include_specialists=args.specialists,
+        include_approved_skills=args.approved_skills,
+    )
+    if not changes:
+        print("NO CHANGES")
+        return "unchanged", []
+    for change in changes:
+        mode = "APPLY" if args.apply else "DRY-RUN"
+        digest = (f" sha256={hashlib.sha256(change.content.encode('utf-8')).hexdigest()}"
+                  if change.kind == "APPROVED-CREATE" else "")
+        print(f"{mode} {change.kind} {change.path}{digest}")
+    if args.apply:
+        apply_transaction(changes, home, verify_change, write_with_backup, ensure_safe)
+        print(f"Applied {len(changes)} file change(s) transactionally.")
+        return "applied", changes
+    print("Preview only; nothing changed. Use --apply after review.")
+    return "planned", changes
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("both", "claude", "codex"), default="both")
@@ -215,41 +252,50 @@ def main(argv: list[str] | None = None) -> int:
         help="Include manually approved standalone third-party skills; dry-run unless --apply",
     )
     parser.add_argument("--home", type=Path, default=Path.home(), help="Override home for testing")
+    parser.add_argument(
+        "--format", choices=("text", "json"), default="text",
+        help="Machine-readable JSON contract for plans, results and errors",
+    )
     args = parser.parse_args(argv)
     home = args.home.expanduser().resolve()
     targets = ("claude", "codex") if args.target == "both" else (args.target,)
+
+    # Capture any installer/backups progress so JSON stdout is one complete
+    # object even on a failed or interrupted transaction. Default text output
+    # is unchanged for CLI users and existing scripts.
+    buffer = io.StringIO()
+    context = redirect_stdout(buffer) if args.format == "json" else nullcontext()
+    changes: list[Change] = []
+    status = "error"
+    error = None
     try:
-        if args.recover:
-            print("RECOVERED" if recover(home, ensure_safe) else "NO PENDING TRANSACTION")
-            return 0
-        if (home / WORK_DIR).exists() or is_link_or_reparse(home / WORK_DIR):
-            raise TransactionError(
-                "Unfinished installation transaction; inspect and run sync.py --recover "
-                "before planning new changes"
-            )
-        changes = build_plan(
-            home, targets,
-            upgrade_skills=args.upgrade_skills,
-            include_specialists=args.specialists,
-            include_approved_skills=args.approved_skills,
-        )
-        if not changes:
-            print("NO CHANGES")
-            return 0
-        for change in changes:
-            mode = "APPLY" if args.apply else "DRY-RUN"
-            digest = (f" sha256={hashlib.sha256(change.content.encode('utf-8')).hexdigest()}"
-                      if change.kind == "APPROVED-CREATE" else "")
-            print(f"{mode} {change.kind} {change.path}{digest}")
-        if args.apply:
-            apply_transaction(changes, home, verify_change, write_with_backup, ensure_safe)
-            print(f"Applied {len(changes)} file change(s) transactionally.")
-        else:
-            print("Preview only; nothing changed. Use --apply after review.")
-        return 0
-    except (OSError, UnicodeError, ValueError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-        return 1
+        with context:
+            status, changes = _run_operation(args, home, targets)
+    except (OSError, UnicodeError, ValueError) as failure:
+        error = failure
+        if args.format == "text":
+            print(f"ERROR: {failure}", file=sys.stderr)
+
+    if args.format == "json":
+        print(json.dumps({
+            "schemaVersion": 1,
+            "product": "SYNCODE",
+            "status": status,
+            "home": str(home),
+            "targets": list(targets),
+            "changes": [
+                {"kind": change.kind,
+                 "path": change.path.relative_to(home).as_posix(),
+                 "sha256": hashlib.sha256(change.content.encode("utf-8")).hexdigest()}
+                for change in changes
+            ],
+            "events": buffer.getvalue().splitlines(),
+            "error": None if error is None else {
+                "type": type(error).__name__,
+                "message": str(error),
+            },
+        }, ensure_ascii=False, sort_keys=True))
+    return 1 if error is not None else 0
 
 
 if __name__ == "__main__":
