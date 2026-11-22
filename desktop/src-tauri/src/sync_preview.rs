@@ -671,12 +671,19 @@ mod tests {
         home: &Path,
         before: &[(std::path::PathBuf, Option<Vec<u8>>, std::time::SystemTime)],
     ) {
+        // The snapshot covers every file and directory, including the
+        // persistent lock file and the transaction workspace.
         assert_eq!(snapshot(home), before, "preview must not write");
-        for forbidden in [
+        for marker in [
             ".ai-engineering-hub.sync.lock",
             ".ai-engineering-hub-transaction",
         ] {
-            assert!(!home.join(forbidden).exists(), "{forbidden} created");
+            let existed = before.iter().any(|(rel, _, _)| rel == Path::new(marker));
+            assert_eq!(
+                home.join(marker).exists(),
+                existed,
+                "{marker} created or removed"
+            );
         }
     }
 
@@ -709,6 +716,7 @@ mod tests {
             run(&runtime, &options(Target::Both, true, false), &env, PREVIEW_TIMEOUT),
             PreviewOutcome::Plan { ref status, .. } if status == "unchanged"
         ));
+        assert_untouched(&home, &before);
         // A v0.1 baseline skill: refused without upgrade preview, UPGRADE with it.
         let skill = home
             .join(".claude")
