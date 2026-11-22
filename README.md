@@ -6,7 +6,7 @@
 
 El repositorio y los marcadores de configuración mantienen por ahora sus identificadores técnicos `ai-engineering-hub` para conservar compatibilidad con las instalaciones actuales.
 
-Estado: **v0.3 en validación final**, con cinco skills propias y cuatro especialistas opcionales para cada cliente. Hay evidencia E2E local en Windows; quedan una comparación controlada sin Hub y la decisión de cierre/etiquetado. Este repositorio es público y está separado de cualquier empleador.
+Estado: **v0.3 en validación final**, con cinco skills propias y cinco especialistas opcionales para cada cliente (uno por skill, incluido el auditor AppSec). Hay evidencia E2E local en Windows; quedan una comparación controlada sin Hub y la decisión de cierre/etiquetado. Este repositorio es público y está separado de cualquier empleador.
 
 ## Objetivo
 
@@ -20,6 +20,7 @@ Usar agentes de programación que inspeccionen el contexto, cuestionen decisione
 - [Especialistas](specialists/README.md): catálogo común y agentes nativos de Claude/Codex; instalación global opcional con `--specialists`.
 - [Instalador](scripts/sync.py): Python estándar, simulación por defecto, aplicación opcional con respaldo y salida JSON versionada (`--format json`).
 - [SYNCODE Doctor](scripts/doctor.py): diagnóstico local de instrucciones, skills, especialistas, herramientas disponibles y recuperación pendiente; sin ejecutar agentes ni alterar archivos.
+- [SYNCODE Desktop](desktop/README.md) 0.4.0 para Windows: diagnóstico, catálogo, vista previa, aplicación vinculada y recuperación desde una app (Tauri 2 con Python embebido); ZIP portable e instalador NSIS generados en CI.
 - [Pruebas](tests/test_sync.py) y CI para validar instalación segura.
 - [Evaluaciones](evals/README.md) de criterio, UX/UI, implementación y revisión cruzada; [rúbrica](evals/RUBRIC.md) y [calculadora local](scripts/score_evals.py).
 - [Registro de skills](registry/README.md): baselines v0.1 para upgrades verificados, fichas de revisión y aprobaciones manuales de capacidades externas (sin instalaciones automáticas).
@@ -71,7 +72,7 @@ La skill [application-security-audit](skills/application-security-audit/SKILL.md
 
 Al revisar riesgos dependientes de versiones o vulnerabilidades recientes, instruye al asistente a consultar fuentes primarias (OWASP, MITRE CWE, NIST, CISA KEV, OSV y avisos de proveedores) si hay acceso autorizado a internet; debe registrar la fecha de consulta o declarar falta de verificación si está offline. No se actualiza a sí misma ni ejecuta herramientas sin autorización.
 
-Se instala exactamente como las demás skills propias: con el comando habitual `python scripts/sync.py --target both` para simular y `--apply` para aplicar, sin flags nuevos. Las cuatro definiciones de especialistas se mantienen sin cambios.
+Se instala exactamente como las demás skills propias: con el comando habitual `python scripts/sync.py --target both` para simular y `--apply` para aplicar, sin flags nuevos. Desde Desktop 0.4.0 tiene además su especialista de segunda opinión, `hub-application-security-auditor` (solo lectura, opcional con `--specialists`); antes faltaba en el catálogo ([ADR-0010](docs/ADR-0010.md)).
 
 ## Principios de seguridad
 

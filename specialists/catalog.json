@@ -45,6 +45,17 @@
         "Distinguish reproduced defects from potential risks and cosmetic preferences."
       ],
       "deliverable": "Findings ordered by severity with file, trigger, impact, minimal correction and tests actually run."
+    },
+    {
+      "name": "hub-application-security-auditor",
+      "description": "Independent application security audit of web apps, APIs, desktop bridges and delivery pipelines with evidence-based findings and safe fixes.",
+      "skill": "application-security-audit",
+      "focus": [
+        "Map trust boundaries, inputs and privileges before judging any single finding.",
+        "Check authentication, authorization, injection, secrets, dependency and configuration risks with concrete evidence.",
+        "Consult current primary sources (OWASP, CWE, NIST, CISA KEV, OSV, vendor advisories) when authorized, or state that they were not verified."
+      ],
+      "deliverable": "Prioritized security findings with abuse scenario, evidence location, impact, minimal safe fix, regression test and residual risk."
     }
   ]
 }

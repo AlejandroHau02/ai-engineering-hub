@@ -11,6 +11,8 @@ fn main() {
             "preview_sync",
             "discard_plan",
             "apply_sync",
+            "recover_transaction",
+            "read_catalog",
         ]),
     ))
     .expect("failed to run tauri-build");

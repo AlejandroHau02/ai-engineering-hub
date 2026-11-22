@@ -20,6 +20,7 @@
     <nav class="sections" aria-label="Secciones">
       <a href="#diagnostico" data-screen="diagnostico">Diagnóstico</a>
       <a href="#sincronizacion" data-screen="sincronizacion">Sincronización</a>
+      <a href="#catalogo" data-screen="catalogo">Catálogo</a>
     </nav>
     <label class="toggle"><input type="checkbox" id="show-paths"> Mostrar rutas completas</label>
   </header>
@@ -31,11 +32,12 @@
       <div class="page-head">
         <div>
           <h1 id="diag-h1" tabindex="-1">Diagnóstico</h1>
-          <p class="lede">Estado de SYNCODE en este equipo para Claude Code y Codex. Solo lectura: no modifica archivos ni ejecuta agentes.</p>
+          <p class="lede">Estado de SYNCODE en este equipo para Claude Code y Codex. El diagnóstico solo lee; la única acción que modifica archivos aquí es «Recuperar», y siempre pide confirmación.</p>
         </div>
         <button type="button" id="diag-run" class="primary">Volver a diagnosticar</button>
       </div>
       <p class="meta" id="diag-meta"></p>
+      <div id="diag-recover-result"></div>
       <div id="diag-result" aria-busy="true">
         <section class="panel loading" aria-label="Diagnóstico en curso">
           <span class="spinner" aria-hidden="true"></span>
@@ -80,7 +82,35 @@
         </section>
       </div>
     </section>
+    <section class="screen" id="screen-catalogo" aria-labelledby="cat-h1" hidden>
+      <div class="page-head">
+        <div>
+          <h1 id="cat-h1" tabindex="-1">Catálogo</h1>
+          <p class="lede">Skills y especialistas de SYNCODE, qué hace cada uno y si están instalados en Claude Code y Codex. Solo consulta: no instala ni modifica nada.</p>
+        </div>
+        <button type="button" id="cat-run" class="primary">Actualizar</button>
+      </div>
+      <p class="meta" id="cat-meta"></p>
+      <div id="cat-result" aria-busy="false"></div>
+    </section>
   </main>
+
+  <dialog id="recover-dialog" aria-labelledby="recover-dialog-title" aria-describedby="recover-dialog-text">
+    <form method="dialog" class="dialog-body">
+      <h2 id="recover-dialog-title">¿Recuperar la operación interrumpida?</h2>
+      <p id="recover-dialog-text">Una sincronización anterior no terminó. Recuperar deja tus archivos de SYNCODE como estaban antes de esa operación o, si ya había terminado, solo completa la limpieza.</p>
+      <ul class="warnings">
+        <li>No se cambia nada más.</li>
+        <li>Si se deshacen cambios, podrás sincronizar de nuevo después.</li>
+        <li>No cierres la app mientras tanto.</li>
+        <li>Todo ocurre en este equipo: no se sube nada ni se ejecuta ningún agente.</li>
+      </ul>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" autofocus>Cancelar</button>
+        <button type="submit" value="recover" class="primary" id="recover-confirm">Recuperar</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="apply-dialog" aria-labelledby="apply-dialog-title" aria-describedby="apply-dialog-scope">
     <form method="dialog" class="dialog-body">

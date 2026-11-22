@@ -299,7 +299,7 @@ mod tests {
                 report,
             } => {
                 assert_eq!(report["summary"]["blockers"], 0);
-                assert_eq!(report["summary"]["missing"], 20);
+                assert_eq!(report["summary"]["missing"], 22);
                 assert_eq!(
                     Path::new(report["home"].as_str().unwrap())
                         .canonicalize()

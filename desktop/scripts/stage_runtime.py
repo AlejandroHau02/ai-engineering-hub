@@ -43,7 +43,8 @@ PTH_CONTENT = "python312.zip\n.\n..\\syncode\\scripts\n"
 # Explicit allow-list: Doctor and its transitive imports plus the resources it
 # reads. Files keep the repository layout so ``Path(__file__).resolve()
 # .parents[1]`` resolves the bundled resources exactly as in a checkout.
-CORE_SCRIPTS = ("doctor", "cli_contract", "specialists", "sync", "transaction",
+# Entry points Desktop runs (doctor, sync, catalog) and their transitive imports.
+CORE_SCRIPTS = ("doctor", "catalog", "cli_contract", "specialists", "sync", "transaction",
                 "approved_installer", "path_safety", "plan_identity", "skill_registry",
                 "skill_scout", "skill_scout_inventory")
 SKILL_NAMES = ("architecture-review", "ux-ui", "backend-engineering", "code-review",

@@ -1,14 +1,16 @@
-# SYNCODE Desktop — Fase 2B (Diagnóstico, vista previa y aplicación vinculada)
+# SYNCODE Desktop 0.4.0 — cierre funcional (Diagnóstico, Sincronización, Catálogo y Recuperación)
 
-Aplicación de escritorio para Windows 11 con dos pantallas:
+Aplicación de escritorio para Windows 11 con tres secciones y la recuperación integrada en Diagnóstico:
 
 - **Diagnóstico**: resultado real de [SYNCODE Doctor](../scripts/doctor.py).
 - **Sincronización**: vista previa calculada por el planificador real (`sync.py --preview`). Muestra el objetivo y el alcance elegidos, los cambios propuestos agrupados por cliente y un identificador técnico del plan, que no autoriza ninguna ejecución.
+- **Catálogo** (Fase 3): las 5 skills y los 5 especialistas de SYNCODE, qué hace cada uno, su estado en Claude Code y Codex (según el último diagnóstico) y otros elementos instalados que SYNCODE no gestiona. Solo consulta (`catalog.py`).
+- **Recuperar** (Fase 3): cuando Diagnóstico detecta una operación interrumpida, «Recuperar operación interrumpida…» ejecuta, tras confirmar, el `sync.py --recover` del núcleo con un token de un solo uso ([ADR-0010](../docs/ADR-0010.md)).
 - **Aplicar** (Fase 2B): tras una confirmación explícita, ejecuta **exactamente** el plan revisado con `sync.py --apply --expect-plan <huella>`. La huella se guarda solo en Rust y la UI recibe un id de un solo uso. El núcleo vuelve a comprobar el plan bajo su bloqueo transaccional y no aplica nada si algo cambió. Antes de cada proceso, la app verifica la integridad de todo el runtime y el núcleo contra una tabla compilada en el ejecutable ([ADR-0009](../docs/ADR-0009.md)).
 
-Todo se ejecuta con un **Python embebido** dentro del paquete y consume el contrato JSON `schemaVersion 1` ([contrato](../docs/SYNCODE_CLI_CONTRACT.md)). Decisiones: [ADR-0007](../docs/ADR-0007.md), [ADR-0008](../docs/ADR-0008.md) y [ADR-0009](../docs/ADR-0009.md).
+Todo se ejecuta con un **Python embebido** dentro del paquete y consume el contrato JSON `schemaVersion 1` ([contrato](../docs/SYNCODE_CLI_CONTRACT.md)). Decisiones: [ADR-0007](../docs/ADR-0007.md), [ADR-0008](../docs/ADR-0008.md), [ADR-0009](../docs/ADR-0009.md) y [ADR-0010](../docs/ADR-0010.md). Evaluación de los especialistas que se usaron para construirla: [SYNCODE_SPECIALIST_EVALUATION.md](../docs/SYNCODE_SPECIALIST_EVALUATION.md).
 
-**Alcance:** Diagnóstico, vista previa y aplicación vinculada. No incluye Recover ni Remove desde la interfaz: ante una recuperación pendiente, la app muestra el comando del runtime integrado. Tampoco incluye gestión de skills ni actualizaciones automáticas. Se distribuye como instalador NSIS (versiones estables) y como **ZIP portable** de prueba.
+**Alcance:** diagnosticar, consultar el catálogo, generar planes, aplicar cambios revisados y recuperar transacciones, sin depender del CLI. No incluye Remove, instalación individual de componentes, marketplace, actualizaciones automáticas, cuentas ni telemetría. Se distribuye como instalador NSIS (versiones estables) y como **ZIP portable** de prueba.
 
 ## Arquitectura
 
@@ -24,7 +26,7 @@ Rust  doctor.rs · sync_preview.rs  ──►  runner.rs (ejecutor común cerrad
 Python embebido 3.12.10 (python/, ._pth fijo) + copia del núcleo (syncode/)
 ```
 
-- **Superficie cerrada:** cuatro comandos. `run_doctor` (sin parámetros) y `preview_sync` (opciones cerradas) son de lectura. `discard_plan` no recibe parámetros y `apply_sync` solo recibe el id de un solo uso. La capability concede únicamente `allow-run-doctor`, `allow-preview-sync`, `allow-discard-plan` y `allow-apply-sync`; no hay plugins (shell, fs, http, dialog) ni permisos `core:*`. La CSP prohíbe scripts y estilos en línea y contenido remoto. Ninguna opción puede expresar `--apply`, `--recover`, `--expect-plan`, `--home` ni `--approved-skills`; además el núcleo rechaza `--preview` junto a `--apply`/`--recover`.
+- **Superficie cerrada:** seis comandos. `run_doctor`, `read_catalog` (sin parámetros) y `preview_sync` (opciones cerradas) son de lectura. `discard_plan` no recibe parámetros. `apply_sync` y `recover_transaction` solo reciben un id de un solo uso. La capability concede únicamente `allow-run-doctor`, `allow-preview-sync`, `allow-read-catalog`, `allow-discard-plan`, `allow-apply-sync` y `allow-recover-transaction`; no hay plugins (shell, fs, http, dialog) ni permisos `core:*`. La CSP prohíbe scripts y estilos en línea y contenido remoto. Ninguna opción puede expresar `--apply`, `--recover`, `--expect-plan`, `--home` ni `--approved-skills`; además el núcleo rechaza `--preview` junto a `--apply`/`--recover`.
 - **Vista previa:** Rust exige `transaction.outcome = not-started`, un plan sin vincular, rutas bajo `.claude/`, `.codex/` o `.agents/` y estados permitidos. Al webview solo le llega un DTO: sin hashes por archivo, sin `events[]` y con el identificador del plan abreviado. Los rechazos del planificador (`skill-upgrade-available`, …) se muestran como resultado, nunca como fallo de transporte.
 - **Entorno del proceso hijo:** `env_clear()` y solo `SystemRoot`, `SystemDrive`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `PATH`, `PATHEXT`, `TEMP`, `TMP` y `NoDefaultCurrentDirectoryInExePath=1`. `PATH` solo sirve para que Doctor detecte `claude`/`codex` con `shutil.which`; nunca los ejecuta.
 - **Aislamiento de Python:** `-I` (ignora `PYTHON*`, site de usuario, directorio del script y cwd), `-B` (no escribe `__pycache__`) y `python312._pth` reescrito a `python312.zip`, `.` y `..\syncode\scripts`, sin `import site`. `sys.path` no depende de `PYTHONPATH`, `PYTHONHOME`, del cwd ni del Python global.
@@ -64,7 +66,7 @@ cargo test
 
 # 5. Instalador NSIS por usuario (sin privilegios de administrador)
 cargo tauri build
-#    → target/release/bundle/nsis/SYNCODE_0.2.0_x64-setup.exe
+#    → target/release/bundle/nsis/SYNCODE_0.4.0_x64-setup.exe
 #    instala syncode-desktop.exe, python/ y syncode/ (por defecto en %LOCALAPPDATA%)
 
 # 6. ZIP portable de prueba (desde la raíz del repo; lista exacta + SHA256SUMS)

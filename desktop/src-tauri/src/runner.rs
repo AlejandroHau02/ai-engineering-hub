@@ -47,6 +47,7 @@ const ENV_ALLOWLIST: [&str; 9] = [
 pub enum Script {
     Doctor,
     Sync,
+    Catalog,
 }
 
 impl Script {
@@ -54,6 +55,7 @@ impl Script {
         match self {
             Script::Doctor => "doctor.py",
             Script::Sync => "sync.py",
+            Script::Catalog => "catalog.py",
         }
     }
 }
@@ -191,6 +193,7 @@ impl Runtime {
             dir.join("python").join("python312.zip"),
             scripts.join(Script::Doctor.file_name()),
             scripts.join(Script::Sync.file_name()),
+            scripts.join(Script::Catalog.file_name()),
             manifest.clone(),
         ];
         // Every core file the bundle declares must exist, so a partial
