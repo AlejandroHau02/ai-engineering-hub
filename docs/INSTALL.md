@@ -1,4 +1,4 @@
-# Instalación y upgrades del Hub (v0.2)
+# Instalación y upgrades del Hub (v0.2–v0.3)
 
 Requiere **Python 3.10+**, un checkout local del repositorio y Claude Code o Codex instalados independientemente.
 
@@ -66,12 +66,30 @@ python -m unittest discover -s tests -v
 
 La primera línea es solo una simulación. La segunda ejecuta pruebas con directorios temporales independientes; no instala nada en tus directorios globales reales. **Para ejecutar toda la suite de pruebas usa Python 3.11+** (incluye pruebas de archivos TOML con `tomllib`); el instalador funciona con Python 3.10+.
 
+## Skills externas aprobadas (incremento experimental)
+
+`--approved-skills` activa la verificación y planificación opcional de skills externas registradas en `registry/approved-skills.json`. Por defecto no escribe:
+
+```powershell
+python scripts/sync.py --target claude --approved-skills
+```
+
+Se requiere `--apply` **además** de `--approved-skills` para instalar; solo después de una aprobación humana concreta. El manifiesto comienza vacío. Se verifican la fuente, hash de Git y SHA-256, compatibilidad y ausencia de conflictos. Solo se admiten archivos autónomos `SKILL.md` sin otros archivos vecinos. Lee [la guía de instalación de skills aprobadas](APPROVED_INSTALL.md) y [ADR-0005](ADR-0005.md).
+
 ## Recuperación
 
-Los archivos actualizados tienen respaldos `*.bak.<timestamp>` al lado del original. Puedes restaurar manualmente el respaldo apropiado tras inspeccionarlo. No borres reglas personales o directorios de skills que no sean del Hub.
+`--apply` prepara un registro persistente y copias de los originales antes de comenzar. Ante una excepción durante el lote, intenta revertirlo automáticamente. Los archivos actualizados conservan respaldos `*.bak.<timestamp>` después de un commit satisfactorio.
 
-La aplicación es segura por archivo, pero **no completamente transaccional** entre todos los archivos; si un error interrumpe el proceso, inspecciona el estado antes de reintentar.
+Si el proceso se interrumpe abruptamente, **no vuelvas a aplicar de inmediato**. Revisa el incidente y ejecuta:
+
+```powershell
+python scripts/sync.py --recover
+```
+
+Con `--home`, usa exactamente el mismo directorio que durante el intento anterior. El comando no requiere credenciales ni consulta GitHub; restaura únicamente archivos que siguen coincidiendo con el contenido previo/nuevo que consta en el journal. Si existe una instalación o recuperación activa, un bloqueo del sistema operativo rechaza `--recover` en paralelo. El archivo oculto `~/.ai-engineering-hub.sync.lock` persiste deliberadamente y no debe borrarse. Si otro proceso alteró alguno, se bloquea y deja evidencia para revisión manual. No borres la carpeta temporal ni los respaldos sin inspección. Lee [recuperación de transacciones](TRANSACTION_RECOVERY.md).
+
+**Límite:** la aplicación no es atómica para todos los archivos al mismo tiempo; el journal necesita recuperación explícita tras interrupciones y las carreras TOCTOU no desaparecen completamente.
 
 ## Política de seguridad
 
-No se descargan skills de terceros, no se instalan paquetes y no se ejecutan comandos externos. Las actualizaciones requieren revisión humana. El repositorio es público y no debe almacenar secretos ni código privado.
+La instalación normal sigue sin descargar terceros. Solo si se opta explícitamente por `--approved-skills`, se consultan archivos aprobados y fijados a un commit en GitHub. Nunca se ejecutan archivos ni se instalan paquetes, y escribir requiere `--apply`. Las actualizaciones requieren revisión humana. El repositorio es público y no debe almacenar secretos ni código privado.

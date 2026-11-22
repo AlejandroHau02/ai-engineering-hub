@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -14,6 +15,9 @@ import sys
 import tempfile
 
 from specialists import files_for_target
+from approved_installer import approved_candidates
+from path_safety import is_link_or_reparse
+from transaction import TransactionError, WORK_DIR, apply_transaction, recover
 
 ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
@@ -36,8 +40,8 @@ def ensure_safe(path: Path, home: Path) -> None:
         raise ValueError(f"Destination is outside home: {path}")
     current = path
     while current != home:
-        if current.is_symlink():
-            raise ValueError(f"Symlink destination is not allowed: {current}")
+        if is_link_or_reparse(current):
+            raise ValueError(f"Symlink or junction destination is not allowed: {current}")
         if current != path and current.exists() and not current.is_dir():
             raise ValueError(f"Parent is not a directory: {current}")
         current = current.parent
@@ -69,6 +73,7 @@ def merge_block(existing: str, block: str) -> str:
 def build_plan(
     home: Path, targets: tuple[str, ...], upgrade_skills: bool = False,
     include_specialists: bool = False,
+    include_approved_skills: bool = False,
 ) -> list[Change]:
     changes: list[Change] = []
     for target in targets:
@@ -113,6 +118,29 @@ def build_plan(
                         )
                     continue
                 changes.append(Change(agent_dest, agent_content, "CREATE"))
+    if include_approved_skills:
+        # Fetch and verify ALL approved sources before any local write; the
+        # manifest remains empty until explicitly reviewed and approved.
+        for relative, approved_content in approved_candidates(targets):
+            dest = home / relative
+            ensure_safe(dest, home)
+            if dest.parent.exists():
+                # A pre-existing skill directory is user-owned. Only allow
+                # idempotence for the exact, standalone SKILL.md and no extras.
+                if not dest.is_file():
+                    raise ValueError(
+                        f"Approved skill directory already exists: {dest.parent}; "
+                        "no files were written"
+                    )
+                if {entry.name for entry in dest.parent.iterdir()} != {"SKILL.md"}:
+                    raise ValueError(
+                        f"Approved skill directory contains other files: {dest.parent}; "
+                        "no files were written"
+                    )
+                if dest.read_bytes() != approved_content.encode("utf-8"):
+                    raise ValueError(f"Approved skill conflict: {dest}; no files were written")
+                continue
+            changes.append(Change(dest, approved_content, "APPROVED-CREATE"))
     return changes
 
 
@@ -129,10 +157,13 @@ def verify_change(change: Change, home: Path) -> None:
         raise ValueError(f"Destination changed since planning: {change.path}")
 
 
-def write_with_backup(change: Change, home: Path) -> None:
+def write_with_backup(change: Change, home: Path, create_backup: bool = True) -> None:
     verify_change(change, home)
     destination = change.path
     destination.parent.mkdir(parents=True, exist_ok=True)
+    # Recheck newly created parent paths: a symlink/non-directory introduced
+    # since the plan or first preflight must not be used for the temp file.
+    verify_change(change, home)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -143,10 +174,14 @@ def write_with_backup(change: Change, home: Path) -> None:
             temp_path = Path(out.name)
         if destination.exists():
             os.chmod(temp_path, stat.S_IMODE(destination.stat().st_mode))
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-            backup = destination.with_name(destination.name + ".bak." + timestamp)
-            shutil.copy2(destination, backup)
-            print(f"BACKUP {backup}")
+            if create_backup:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                backup = destination.with_name(destination.name + ".bak." + timestamp)
+                shutil.copy2(destination, backup)
+                print(f"BACKUP {backup}")
+        # Detect changes that occurred while staging the temporary file.
+        # This narrows, but does not eliminate, the cross-platform TOCTOU window.
+        verify_change(change, home)
         os.replace(temp_path, destination)
     finally:
         if temp_path is not None and temp_path.exists():
@@ -156,7 +191,9 @@ def write_with_backup(change: Change, home: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("both", "claude", "codex"), default="both")
-    parser.add_argument("--apply", action="store_true", help="Write files explicitly")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--apply", action="store_true", help="Write files explicitly")
+    action.add_argument("--recover", action="store_true", help="Explicitly recover interrupted install")
     parser.add_argument(
         "--specialists", action="store_true",
         help="Include trusted first-party specialist definitions (dry-run unless --apply)",
@@ -165,31 +202,40 @@ def main(argv: list[str] | None = None) -> int:
         "--upgrade-skills", action="store_true",
         help="Allow reviewed upgrades only when installed skill exactly matches v0.1 baseline",
     )
+    parser.add_argument(
+        "--approved-skills", action="store_true",
+        help="Include manually approved standalone third-party skills; dry-run unless --apply",
+    )
     parser.add_argument("--home", type=Path, default=Path.home(), help="Override home for testing")
     args = parser.parse_args(argv)
     home = args.home.expanduser().resolve()
     targets = ("claude", "codex") if args.target == "both" else (args.target,)
     try:
+        if args.recover:
+            print("RECOVERED" if recover(home, ensure_safe) else "NO PENDING TRANSACTION")
+            return 0
+        if (home / WORK_DIR).exists() or is_link_or_reparse(home / WORK_DIR):
+            raise TransactionError(
+                "Unfinished installation transaction; inspect and run sync.py --recover "
+                "before planning new changes"
+            )
         changes = build_plan(
             home, targets,
             upgrade_skills=args.upgrade_skills,
             include_specialists=args.specialists,
+            include_approved_skills=args.approved_skills,
         )
         if not changes:
             print("NO CHANGES")
             return 0
         for change in changes:
             mode = "APPLY" if args.apply else "DRY-RUN"
-            print(f"{mode} {change.kind} {change.path}")
+            digest = (f" sha256={hashlib.sha256(change.content.encode('utf-8')).hexdigest()}"
+                      if change.kind == "APPROVED-CREATE" else "")
+            print(f"{mode} {change.kind} {change.path}{digest}")
         if args.apply:
-            # Preflight every target before any write. Concurrent changes still
-            # trigger a per-file recheck in write_with_backup; backups support
-            # recovery if a later operation fails.
-            for change in changes:
-                verify_change(change, home)
-            for change in changes:
-                write_with_backup(change, home)
-            print(f"Applied {len(changes)} file change(s).")
+            apply_transaction(changes, home, verify_change, write_with_backup, ensure_safe)
+            print(f"Applied {len(changes)} file change(s) transactionally.")
         else:
             print("Preview only; nothing changed. Use --apply after review.")
         return 0

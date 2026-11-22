@@ -16,6 +16,7 @@ import sys
 from urllib.parse import urlsplit
 
 from skill_scout import parse_skill_url
+from path_safety import is_link_or_reparse
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "registry" / "approved-skills.json"
@@ -24,6 +25,8 @@ ID_RE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 OWN_SKILLS = frozenset({"architecture-review", "backend-engineering", "code-review", "ux-ui"})
+WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul"})
+WINDOWS_RESERVED |= frozenset(f"{name}{number}" for name in ("com", "lpt") for number in range(1, 10))
 TARGET_PATHS = { "claude": ".claude/skills", "codex": ".agents/skills" }
 COMPAT = frozenset({"tested", "unsupported", "not-verified"})
 
@@ -119,6 +122,8 @@ def review_template(report: dict) -> dict:
         raise RegistryError("Skill name is not a safe registry identifier")
     if name in OWN_SKILLS:
         raise RegistryError("Skill name conflicts with a first-party Hub skill")
+    if name in WINDOWS_RESERVED:
+        raise RegistryError("Skill name is reserved on Windows")
     findings = report.get("findings")
     if not isinstance(findings, list) or len(findings) > 1000:
         raise RegistryError("Invalid inspect findings")
@@ -161,6 +166,8 @@ def validate_entry(entry: object) -> dict:
         raise RegistryError("Invalid approved-skill identifier")
     if name in OWN_SKILLS:
         raise RegistryError(f"Approved skill {name} would shadow a first-party skill")
+    if name in WINDOWS_RESERVED:
+        raise RegistryError(f"Approved skill {name} is a reserved Windows path")
     _source(entry["source"])
     assessment = _object(entry["assessment"], {"license", "risk", "compatibility"}, "assessment")
     lic = _object(assessment["license"], {"status", "identifier", "evidence"}, "license")
@@ -230,12 +237,18 @@ def _obstacle(home: Path, target: Path) -> str:
     """Conservatively flag existing destinations or symlinked parent paths."""
     current = target
     while current != home:
-        if current.is_symlink():
+        if is_link_or_reparse(current):
             return "BLOCKED_SYMLINK"
         if current.exists() and current != target and not current.is_dir():
             return "BLOCKED_NON_DIRECTORY"
         current = current.parent
-    return "BLOCKED_EXISTING" if target.exists() else "PROPOSED_NEW"
+    if target.parent.exists():
+        if not target.is_file():
+            return "BLOCKED_EXISTING_DIRECTORY"
+        if {entry.name for entry in target.parent.iterdir()} != {"SKILL.md"}:
+            return "BLOCKED_EXTRA_FILES"
+        return "BLOCKED_EXISTING"
+    return "PROPOSED_NEW"
 
 
 def promotion_plan(manifest: dict, home: Path, targets: tuple[str, ...]) -> dict:
@@ -267,10 +280,10 @@ def promotion_plan(manifest: dict, home: Path, targets: tuple[str, ...]) -> dict
         "changes": changes, "executed": False, "filesWritten": 0,
         "requires": [
             "Independent verification of approved GitHub revision and all relevant files",
-            "Separate implementation of a verified installer with preflight and rollback",
+            "Use sync.py --approved-skills for separate pinned verification; --apply writes only after consent",
             "Explicit owner authorization before any installation",
         ],
-        "note": "Preview only. The current sync.py DOES NOT install third-party skills.",
+        "note": "Preview only; never writes. The opt-in sync.py installer separately verifies approved standalone skills.",
     }
 
 

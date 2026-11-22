@@ -37,11 +37,11 @@ python scripts/skill_registry.py plan --target both
 
 El manifiesto `registry/approved-skills.json` está vacío por diseño. Su validación debe reportar cero skills aprobadas y el plan, cero cambios. Puedes usar `--manifest ruta.json` con copias de prueba y `--home ruta_absoluta` para evaluar conflictos en un directorio alternativo.
 
-La simulación marca `PROPOSED_NEW`, `BLOCKED_UNSUPPORTED`, `BLOCKED_EXISTING`, `BLOCKED_SYMLINK` o `BLOCKED_NON_DIRECTORY` según compatibilidad y estado de los destinos; **nunca escribe**. Un cliente declarado `unsupported` jamás se ofrece como destino instalable. No equivale al preflight del futuro instalador y los resultados pueden quedar obsoletos si cambia el sistema de archivos.
+La simulación marca `PROPOSED_NEW`, `BLOCKED_UNSUPPORTED`, `BLOCKED_EXISTING`, `BLOCKED_EXISTING_DIRECTORY`, `BLOCKED_EXTRA_FILES`, `BLOCKED_SYMLINK` o `BLOCKED_NON_DIRECTORY` según compatibilidad y estado de los destinos; **nunca escribe**. Un cliente declarado `unsupported` jamás se ofrece como destino instalable. No sustituye el preflight del instalador opcional `sync.py --approved-skills`, ni verifica el contenido remoto; sus resultados pueden quedar obsoletos si cambia el sistema de archivos.
 
 ## 4. Límites
 
-`validate` solo verifica la estructura, no firma ni autentica a quien aprobó, no contacta a GitHub ni verifica que el contenido externo actual coincida con sus hashes. Un informe `inspect` tampoco certifica seguridad. No existe integración de `registry/approved-skills.json` con `scripts/sync.py`. La copia o instalación será un cambio separado, con revalidación de procedencia, idempotencia, respaldos, pruebas y autorización explícita.
+`validate` solo verifica la estructura, no firma ni autentica a quien aprobó, no contacta a GitHub ni verifica que el contenido externo actual coincida con sus hashes. Un informe `inspect` tampoco certifica seguridad. Existe ahora una vía opcional de instalación **solo para skills autónomas de un único `SKILL.md`** con verificación remota de procedencia y hashes: [guía](APPROVED_INSTALL.md). Su activación requiere `--approved-skills` y una escritura adicionalmente requiere `--apply`. El registro permanece vacío; no se instala ningún tercero. Las skills con directorios completos continuarán bloqueadas hasta una evolución del esquema.
 
 Pruebas offline:
 

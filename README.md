@@ -62,7 +62,7 @@ El primer paso es un dry-run; añade definiciones globales a `~/.claude/agents/`
 
 ## Principios de seguridad
 
-El instalador no descarga nada ni ejecuta código de terceros. Solo actualiza skills v0.1 reconocidas cuando lo autorizas mediante las opciones de upgrade y aplicación; nunca sobreescribe personalizaciones desconocidas. Las instrucciones personales fuera del bloque gestionado se conservan y los cambios se respaldan.
+El instalador no ejecuta código de terceros. En el flujo normal no descarga skills; **solo con `--approved-skills`** consulta archivos aprobados de GitHub para verificar su integridad antes de proponer cambios. Solo actualiza skills v0.1 reconocidas cuando lo autorizas mediante las opciones de upgrade y aplicación; nunca sobreescribe personalizaciones desconocidas. Las instrucciones personales fuera del bloque gestionado se conservan y los cambios se respaldan.
 
 **No publiques aquí claves, información de clientes, código propietario, logs ni contexto privado de proyectos.**
 
@@ -90,11 +90,23 @@ python scripts/skill_registry.py plan --target both
 
 **No se instala ninguna skill externa ni existe `--apply`** en el gestor. El plan marca potenciales destinos y conflictos; las fichas requieren licencia, riesgos, compatibilidad y aprobación revisados manualmente. Consulta [la guía](docs/SKILL_REGISTRY.md) y [ADR-0004](docs/ADR-0004.md).
 
+## Instalación verificada de skills aprobadas (PR #10, experimental)
+
+La instalación opcional de skills externas aprobadas utiliza el `sync.py` existente, con **dry-run predeterminado** y un mecanismo de **rollback por lote y recuperación explícita** ante interrupciones. El manifiesto continúa vacío; no se instala ninguna skill de terceros por defecto.
+
+```powershell
+python scripts/sync.py --target both --approved-skills
+# Aplicar solo después de revisar y aprobar el plan:
+python scripts/sync.py --target both --approved-skills --apply
+```
+
+Primero se comprueba el estado declarado de licencia/aprobación en el manifiesto (que debe haber sido revisado manualmente), compatibilidad de cada cliente, el SHA del commit, blob y SHA-256 de la fuente. Este incremento **solo soporta skills autónomas de un único `SKILL.md`**; se rechazan dependencias dentro de su directorio. Consulta [la guía](docs/APPROVED_INSTALL.md), [la recuperación de instalaciones](docs/TRANSACTION_RECOVERY.md) y [ADR-0005](docs/ADR-0005.md).
+
 ## Roadmap
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
 - **v0.2:** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
-- **v0.3 (en desarrollo):** inspección externa, fichas y manifiesto de aprobación; la copia, instalación y fuentes adicionales permanecen pendientes.
+- **v0.3 (en desarrollo):** inspección, registro de aprobaciones y primer instalador opcional para skills de un solo archivo; bundles y fuentes adicionales siguen pendientes.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
 

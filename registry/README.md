@@ -24,8 +24,12 @@ Update proposals should include a change diff, compatibility results, and explic
 
 ## Skill Scout v0.3 (prototipo)
 
-`scripts/skill_scout.py` puede descubrir **repositorios candidatos**, localizar rutas `SKILL.md` existentes en un commit y revisar de forma estática el archivo junto con recursos relacionados limitados. Su informe no se registra aquí ni confiere confianza, compatibilidad o aprobación. El instalador sigue sin aceptar contenido de terceros. Véanse [la guía](../docs/SKILL_SCOUT.md) y [ADR-0003](../docs/ADR-0003.md).
+`scripts/skill_scout.py` puede descubrir **repositorios candidatos**, localizar rutas `SKILL.md` existentes en un commit y revisar de forma estática el archivo junto con recursos relacionados limitados. Su informe no se registra aquí ni confiere confianza, compatibilidad o aprobación. El instalador estándar continúa sin usar contenido de terceros; desde PR #10 existe una ruta de instalación verificada únicamente mediante la opción explícita `--approved-skills`. Véanse [la guía](../docs/SKILL_SCOUT.md) y [ADR-0003](../docs/ADR-0003.md).
 
 ## Manifiesto de aprobaciones (v0.3 en desarrollo)
 
-`approved-skills.json` es un manifiesto **vacío por defecto**. `scripts/skill_registry.py` genera borradores de ficha, valida los campos requeridos para un registro aprobado y ofrece simulaciones de rutas. El estado `approved` es una declaración humana versionada que debe revisarse, **no** confianza automática ni autorización para instalar. El instalador existente no lee el manifiesto. Consulta [la guía](../docs/SKILL_REGISTRY.md) y [ADR-0004](../docs/ADR-0004.md).
+`approved-skills.json` es un manifiesto **vacío por defecto**. `scripts/skill_registry.py` genera borradores de ficha, valida los campos requeridos para un registro aprobado y ofrece simulaciones de rutas. El estado `approved` es una declaración humana versionada que debe revisarse, **no** confianza automática ni autorización para instalar. Desde PR #10, el instalador puede leer el manifiesto **solo si** se usa `--approved-skills`; por defecto no lo consulta. Consulta [la guía](../docs/SKILL_REGISTRY.md) y [ADR-0004](../docs/ADR-0004.md).
+
+## Promoción aprobada (PR #10; experimental)
+
+`scripts/sync.py --approved-skills` habilita un plan opcional de instalación controlada para una **skill autónoma de un único `SKILL.md`**. Comprueba la fuente GitHub fijada a commit y hashes aprobados antes de reutilizar el preflight y la escritura explícita del instalador. El manifiesto continúa vacío; los bundles quedan bloqueados. Véanse [ADR-0005](../docs/ADR-0005.md) y [la guía](../docs/APPROVED_INSTALL.md). La promoción nunca ejecuta el contenido de la skill.
