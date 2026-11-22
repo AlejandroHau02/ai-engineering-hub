@@ -320,7 +320,7 @@
       const rows = [
         { id: `diag-${key}-cli`, name: "CLI", hint: exe.path || null, info: describe(EXECUTABLE, exe.status) },
         { id: `diag-${key}-instructions`, name: "Instrucciones globales", hint: meta.instructions,
-          info: describe(STATUS, (client.instructions || {}).status), instructions: true },
+          info: instructionsStatus((client.instructions || {}).status), instructions: true },
       ];
       const groups = [];
       for (const [field, title] of [["skills", "Skills"], ["specialists", "Especialistas"]]) {
@@ -347,6 +347,14 @@
       }
     }
     return { items, clients, tx, lock };
+  }
+
+  // Doctor reports "modified" for a managed block that differs from this
+  // version, whether the user edited it or SYNCODE itself changed it; the
+  // label says only what is known.
+  function instructionsStatus(raw) {
+    if (raw === "modified") return { label: "Difiere de esta versión de SYNCODE", level: "block", raw };
+    return describe(STATUS, raw);
   }
 
   function rank(level) { return { block: 0, unknown: 1, warn: 2, neutral: 3, info: 3, ok: 4 }[level] ?? 1; }
