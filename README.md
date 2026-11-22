@@ -2,7 +2,7 @@
 
 **Entorno personal de ingeniería AI-first para Claude Code y Codex.**
 
-Estado: **v0.2 consolidada en `main`**, con cuatro skills propias y cuatro especialistas opcionales para cada cliente. Este repositorio es público y está separado de cualquier empleador.
+Estado: **v0.3 en evolución**, con cinco skills propias y cuatro especialistas opcionales para cada cliente. Este repositorio es público y está separado de cualquier empleador.
 
 ## Objetivo
 
@@ -12,7 +12,7 @@ Usar agentes de programación que inspeccionen el contexto, cuestionen decisione
 
 - [Engineering Core](core/ENGINEERING_CORE.md): principios globales de ingeniería.
 - [Adaptadores](adapters/): instrucciones globales específicas para Claude Code y Codex.
-- [Skills](skills/): arquitectura, UX/UI, backend y revisión de código.
+- [Skills](skills/): arquitectura, UX/UI, backend, revisión de código y auditoría de seguridad de aplicaciones (AppSec).
 - [Especialistas](specialists/README.md): catálogo común y agentes nativos de Claude/Codex; instalación global opcional con `--specialists`.
 - [Instalador](scripts/sync.py): Python estándar, simulación por defecto, aplicación opcional con respaldo.
 - [Pruebas](tests/test_sync.py) y CI para validar instalación segura.
@@ -60,6 +60,14 @@ python scripts/sync.py --target both --specialists
 
 El primer paso es un dry-run; añade definiciones globales a `~/.claude/agents/` y `~/.codex/agents/` solo con `--apply`. Los especialistas se limitan a revisión y asesoría; no reemplazan al agente principal. Consulta [instalación, límites de permisos y ejemplos](specialists/README.md). En Codex las restricciones de solo lectura son instrucciones, no un sandbox independiente.
 
+## Auditoría de seguridad de aplicaciones (quinta skill propia)
+
+La skill [application-security-audit](skills/application-security-audit/SKILL.md) permite revisar código, APIs, autorización y aislamiento entre tenants, secretos, dependencias y configuraciones de despliegue, con hallazgos sustentados en evidencia y pruebas de regresión. **No es un agente adicional, un escáner activo ni un servicio en segundo plano.**
+
+Al revisar riesgos dependientes de versiones o vulnerabilidades recientes, instruye al asistente a consultar fuentes primarias (OWASP, MITRE CWE, NIST, CISA KEV, OSV y avisos de proveedores) si hay acceso autorizado a internet; debe registrar la fecha de consulta o declarar falta de verificación si está offline. No se actualiza a sí misma ni ejecuta herramientas sin autorización.
+
+Se instala exactamente como las demás skills propias: con el comando habitual `python scripts/sync.py --target both` para simular y `--apply` para aplicar, sin flags nuevos. Las cuatro definiciones de especialistas se mantienen sin cambios.
+
 ## Principios de seguridad
 
 El instalador no ejecuta código de terceros. En el flujo normal no descarga skills; **solo con `--approved-skills`** consulta archivos aprobados de GitHub para verificar su integridad antes de proponer cambios. Solo actualiza skills v0.1 reconocidas cuando lo autorizas mediante las opciones de upgrade y aplicación; nunca sobreescribe personalizaciones desconocidas. Las instrucciones personales fuera del bloque gestionado se conservan y los cambios se respaldan.
@@ -106,7 +114,7 @@ Primero se comprueba el estado declarado de licencia/aprobación en el manifiest
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
 - **v0.2:** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
-- **v0.3 (en desarrollo):** inspección, registro de aprobaciones y primer instalador opcional para skills de un solo archivo; bundles y fuentes adicionales siguen pendientes.
+- **v0.3 (en desarrollo):** inspección, aprobación e instalación controlada de skills externas autónomas y quinta skill propia de auditoría AppSec; bundles y fuentes adicionales siguen pendientes.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
 
