@@ -49,7 +49,10 @@ def _entry(home: Path, relative: Path, expected: str, kind: str,
 def _workspace_status(home: Path) -> str:
     path = home / WORK_DIR
     try:
-        ensure_safe(path, home)
+        # The transaction workspace is a directory, not a regular file.
+        # Validate its parents through a child path to avoid classifying
+        # a legitimate pending journal as an unsafe directory.
+        ensure_safe(path / "journal.json", home)
         if path.exists():
             return "pending-recovery"
         return "clear"
