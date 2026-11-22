@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "sync.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 from specialists import read_catalog, files_for_target, render_claude, render_codex  # noqa: E402
+from sync import SKILLS  # noqa: E402
 
 
 class SpecialistsTests(unittest.TestCase):
@@ -71,7 +72,8 @@ class SpecialistsTests(unittest.TestCase):
     def test_specialist_dry_run_writes_nothing(self):
         result = self.sync("--target", "both", "--specialists")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.count("DRY-RUN CREATE"), 18)
+        self.assertEqual(result.stdout.count("DRY-RUN CREATE"),
+                         2 * (1 + len(SKILLS) + len(read_catalog())))
         self.assertIn(".claude", result.stdout)
         self.assertIn(".codex", result.stdout)
         self.assertEqual(list(self.home.iterdir()), [])
