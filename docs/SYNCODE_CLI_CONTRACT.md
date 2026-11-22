@@ -28,7 +28,8 @@ Los códigos son aditivos: no se renombran ni se reutilizan con otro significado
 | `skill-upgrade-available` | Una skill instalada difiere; existe vista previa con `--upgrade-skills`. | Ofrecer la vista previa de upgrade. |
 | `skill-modified` | Skill/componente modificado localmente o sin baseline reconocido. | Revisión manual; nunca sobrescribir. |
 | `destination-conflict` | El destino existe con contenido o archivos ajenos (incluye backups preexistentes). | Revisión manual. |
-| `destination-changed` | Un destino cambió entre el plan y la escritura. | Volver a planificar. |
+| `destination-changed` | Un destino cambió entre el plan y la escritura (comparación por bytes). | Volver a planificar. |
+| `stale-plan` | Con `--expect-plan`: el plan reconstruido ya no coincide con la huella revisada. Nada se escribió. | Mostrar el plan actual (`changes`, `plan.fingerprint`) y pedir **nueva confirmación**. |
 | `unknown-component` | Componente no reconocido por el catálogo o manifiesto. | Error de integración. |
 | `transaction-pending` | Existe un workspace de transacción. | Ejecutar `sync.py --recover`. |
 | `lock-busy` | Otra instalación o recuperación está activa. | Esperar y reintentar. |
@@ -78,6 +79,7 @@ No instala ni actualiza nada. Respuesta JSON:
 - `changes[]`: `kind` (`CREATE`, `UPDATE`, `UPGRADE`, `APPROVED-CREATE`), ruta **relativa a home**, SHA-256 del contenido a instalar. Nunca contiene contenido de la skill. Si `--apply` falla después de planificar, contiene **lo que se intentó aplicar**; su estado real lo indica `transaction.outcome`. Si el fallo ocurre durante la planificación, es `[]`.
 - `events[]`: líneas del registro textual existente capturadas para compatibilidad; son informativas, no un contrato para parsear. Pueden incluir rutas locales de backups, incluso de backups retirados después por un rollback.
 - `transaction`: `{outcome, recoveryRequired}` (ver abajo).
+- `plan`: `{algorithm, fingerprint, expected, matched}` (ver «Plan vinculante»).
 - `error`: `null` en éxito o `{type, code, message}`.
 
 ### `transaction.outcome` y `recoveryRequired`
@@ -106,9 +108,43 @@ Con `--recover`, `outcome` indica cómo terminó **la transacción recuperada**:
 
 La limpieza elimina el journal **en último lugar**: una limpieza interrumpida deja el journal (recuperable) o un directorio vacío, nunca datos de recuperación huérfanos.
 
-El formato es válido también para `--apply` y `--recover`, que **conservan su semántica y permisos anteriores**. La aplicación deberá comprobar `status`, `transaction`, `error.code` y el código de salida antes de habilitar confirmaciones. Un plan no es un token de autorización ni queda fijado en disco: cada invocación reconstruye el plan y, durante `--apply`, el instalador vuelve a verificar los destinos bajo un bloqueo exclusivo antes de escribir. **No garantiza que el entorno completo permanezca inmutable entre el dry-run y la aplicación** (el plan vinculante queda para la Fase 0B).
+El formato es válido también para `--apply` y `--recover`, que **conservan su semántica y permisos anteriores**. La aplicación deberá comprobar `status`, `transaction`, `error.code` y el código de salida antes de habilitar confirmaciones. Un plan no es un token de autorización ni queda fijado en disco: cada invocación reconstruye el plan y, durante `--apply`, el instalador vuelve a verificar los destinos bajo un bloqueo exclusivo antes de escribir. Sin `--expect-plan`, **no garantiza que se aplique el mismo lote que se revisó**; para eso existe el plan vinculante.
 
 Código de salida: `0` operación completada; `1` error (incluidos argumentos inválidos en modo JSON); `130` interrupción en modo JSON. El modo texto es el predeterminado y conserva sus mensajes anteriores; argumentos inválidos en modo texto siguen saliendo con `2`.
+
+## Plan vinculante (`--expect-plan`)
+
+Garantiza que un apply ejecuta **exactamente el lote revisado**:
+
+```powershell
+python scripts/sync.py --target both --format json
+# el cliente muestra changes[] y plan.fingerprint; el usuario confirma
+python scripts/sync.py --target both --apply --expect-plan <plan.fingerprint> --format json
+```
+
+**Huella** (`plan.fingerprint`, formato `syncode-plan-v1:sha256:<64 hex>`): SHA-256 de un documento JSON canónico (`sort_keys`, separadores fijos, ASCII) que contiene:
+
+- `home` resuelto (en Windows normalizado con `normcase`: mayúsculas y separadores no cambian la huella);
+- `targets` y opciones (`--upgrade-skills`, `--specialists`, `--approved-skills`);
+- la lista **ordenada** de operaciones: `kind`, ruta relativa, SHA-256 del contenido a instalar y SHA-256 de los **bytes originales** del destino (o su ausencia).
+
+Los recursos del checkout (`core/`, `adapters/`, `skills/`, `specialists/catalog.json`, manifiesto y contenido de skills aprobadas) quedan cubiertos porque determinan qué operaciones existen y qué bytes se instalan. Los destinos que ya están al día no forman parte del lote: si cambian, la reconstrucción produce otro lote o un error. La versión del instalador no se incluye: un commit que no altera el resultado no invalida la revisión. La huella es **opaca**: el cliente la reenvía sin recalcularla. No contiene rutas ni contenido legibles y los hashes de bytes originales **no** se publican por archivo, pero es un hash sin sal de datos mayoritariamente predecibles: con un único `UPDATE`, podría usarse para confirmar por fuerza bruta un archivo de instrucciones de baja entropía. Trátala como dato local; no la registres ni la envíes a terceros.
+
+**`plan`** en la respuesta de `sync.py`: `algorithm` (`"syncode-plan-v1"`), `fingerprint` (huella del plan construido en esta invocación; `null` si no pudo construirse), `expected` (la huella recibida o `null`) y `matched` (`true`/`false` con `--expect-plan`; `null` sin él). Con `stale-plan`, `changes` y `plan.fingerprint` describen el **plan actual** para volver a revisarlo; nunca deben aplicarse sin nueva confirmación.
+
+**Semántica de `--apply --expect-plan <huella>`:**
+
+1. Errores de uso sin acceso a disco (ni siquiera el archivo de bloqueo): `--expect-plan` sin `--apply`, con `--recover`, o con formato inválido → `invalid-arguments`.
+2. El contenido de skills aprobadas (red) se descarga y verifica **antes** del bloqueo, una sola vez.
+3. Comprobación temprana de mejor esfuerzo fuera del bloqueo: si una reconstrucción limpia ya difiere → `stale-plan` sin crear el archivo de bloqueo. Se omite si existe un workspace de transacción y sus errores se ignoran (otro proceso puede estar a mitad de una transacción); el veredicto con autoridad es el del paso 4, de modo que una aplicación concurrente se informa como `lock-busy` y no como `transaction-pending`.
+4. Bajo el bloqueo exclusivo (después de comprobar `transaction-pending`) se **reconstruye** el plan desde disco y se compara de nuevo. Solo una coincidencia exacta continúa hacia la transacción; en otro caso `stale-plan`.
+5. Si la reconstrucción falla (por ejemplo, apareció un archivo en una carpeta de skill planificada), se devuelve el **código específico** (`destination-conflict`, `skill-modified`, …) con `plan.fingerprint: null`.
+6. En todo rechazo: `outcome: not-started` y ningún destino, directorio padre, backup ni workspace se crea o modifica. El archivo de bloqueo persistente puede quedar creado si el rechazo ocurre en el paso 4 (también un plan vacío que coincide adquiere el bloqueo). Si la reconstrucción bajo el bloqueo falla, `plan.fingerprint`/`plan.matched` son `null` y `changes` es `[]`: nunca se informa el plan de la comprobación temprana.
+7. Un plan esperado no vacío que ahora estaría vacío (por ejemplo, el mismo apply ya se ejecutó) es `stale-plan`, nunca `unchanged`.
+
+**La huella es un control de frescura, no una autorización.** El cliente Desktop debe pedir confirmación explícita y enviar la huella confirmada. Su tabla de comandos **solo debe contener la variante con `--expect-plan`** para aplicar; `--apply` sin huella se conserva para el uso manual del CLI (sin vinculación). La misma huella vuelve a coincidir si el estado vuelve a ser idéntico: el cliente no debe tratarla como una aprobación permanente.
+
+**Límites:** el bloqueo es consultivo y no detiene a programas ajenos a SYNCODE (editores, sincronizadores). Entre la reconstrucción y cada escritura se vuelve a comparar por bytes (`destination-changed`) y la instantánea del journal debe coincidir con los bytes planificados, pero persiste una ventana mínima antes del reemplazo atómico de cada archivo. `remove.py` no usa todavía planes vinculantes (es una única operación que ya revalida un hash fijo bajo el bloqueo).
 
 ## Retirada de componentes
 
@@ -121,6 +157,8 @@ Respuesta: `schemaVersion: 1`, `product`, `status` (`planned`, `unchanged`, `rem
 ## Compatibilidad de esta revisión
 
 Se mantiene `schemaVersion: 1` porque los cambios son aditivos para los consumidores existentes:
+
+- Fase 0B: opción nueva `--expect-plan`, objeto nuevo `plan` en la respuesta de sync y código nuevo `stale-plan`. Además, `destination-changed` compara ahora los bytes originales (un cambio solo de saltos de línea entre plan y escritura también se rechaza).
 
 - Campos nuevos: `error.code` (sync/remove), `errorCode`, `home` y `targets` en errores de Doctor, `transaction` en sync, `home` en remove.
 - Sin valores nuevos de `status` y sin cambios en los valores de `type` emitidos antes.
