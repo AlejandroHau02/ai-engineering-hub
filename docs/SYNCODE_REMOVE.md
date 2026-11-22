@@ -33,8 +33,8 @@ La aplicación compara el contenido exacto con la definición de primera parte o
 
 Una vez verificado, se ejecuta **una única operación de renombrado local** para desplazar el componente fuera de la ruta donde el cliente lo descubre:
 
-- Skill: `~/.claude/skills/<id>` pasa a un directorio hermano `<id>.removed.<fecha>-<token>` con su archivo intacto.
-- Especialista: `~/.codex/agents/hub-foo.toml` pasa a `hub-foo.toml.removed.<fecha>-<token>`, que ya no coincide con la extensión nativa de descubrimiento.
+- Skill: `~/.claude/skills/<id>` pasa a **`~/.claude/skills-<id>.removed.<fecha>-<token>`**, fuera del árbol `skills/`, conservando su `SKILL.md`.
+- Especialista: `~/.codex/agents/hub-foo.toml` pasa a **`~/.codex/agents-hub-foo.toml.removed.<fecha>-<token>`**, fuera del directorio `agents/`.
 
 No se borra el contenido original ni se mueven archivos personales. El comando muestra la ubicación exacta del respaldo. Para restaurar manualmente, verifica que la ruta original sigue libre y renombra el respaldo a su **nombre original**; conserva una copia si existe alguna duda.
 
