@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
 import shutil
 import stat
 import tempfile
@@ -264,6 +264,28 @@ def _flags(args) -> dict:
             "approvedSkills": args.approved_skills}
 
 
+def describe_change(relative: str, kind: str) -> dict:
+    """Classify a planned destination for clients (pure; no disk access).
+
+    Additive contract field: ``target`` (claude/codex) and ``component``
+    ``{type, name}`` derived from the fixed managed layout. It is presentation
+    data only and is not part of the plan fingerprint.
+    """
+    parts = tuple(relative.split("/"))
+    if parts == (".claude", "CLAUDE.md"):
+        return {"target": "claude", "component": {"type": "instructions", "name": None}}
+    if parts == (".codex", "AGENTS.md"):
+        return {"target": "codex", "component": {"type": "instructions", "name": None}}
+    if len(parts) == 4 and parts[1] == "skills" and parts[3] == "SKILL.md"             and parts[0] in (".claude", ".agents"):
+        return {"target": "claude" if parts[0] == ".claude" else "codex",
+                "component": {"type": "approved-skill" if kind == "APPROVED-CREATE" else "skill",
+                              "name": parts[2]}}
+    if len(parts) == 3 and parts[1] == "agents" and parts[0] in (".claude", ".codex"):
+        return {"target": "claude" if parts[0] == ".claude" else "codex",
+                "component": {"type": "specialist", "name": PurePath(parts[2]).stem}}
+    return {"target": None, "component": {"type": "unknown", "name": None}}
+
+
 def plan_fingerprint(home: Path, targets: tuple[str, ...], flags: dict,
                      changes: list[Change]) -> str:
     """Identity of exactly this batch; the single function used by dry-run and apply."""
@@ -404,6 +426,11 @@ def _parser(json_errors: bool) -> ContractArgumentParser:
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--apply", action="store_true", help="Write files explicitly")
     action.add_argument("--recover", action="store_true", help="Explicitly recover interrupted install")
+    action.add_argument(
+        "--preview", action="store_true",
+        help="Explicit read-only plan (same as the default dry-run); rejected together "
+             "with --apply or --recover so a preview can never become a write",
+    )
     parser.add_argument(
         "--specialists", action="store_true",
         help="Include trusted first-party specialist definitions (dry-run unless --apply)",
@@ -487,7 +514,8 @@ def main(argv: list[str] | None = None) -> int:
             changes=[
                 {"kind": change.kind,
                  "path": change.path.relative_to(home).as_posix(),
-                 "sha256": hashlib.sha256(change.content.encode("utf-8")).hexdigest()}
+                 "sha256": hashlib.sha256(change.content.encode("utf-8")).hexdigest(),
+                 **describe_change(change.path.relative_to(home).as_posix(), change.kind)}
                 for change in planned
             ] if home is not None else [],
             events=buffer.getvalue().splitlines(),

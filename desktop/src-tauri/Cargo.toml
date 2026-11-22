@@ -1,7 +1,7 @@
 [package]
 name = "syncode-desktop"
-version = "0.1.0"
-description = "SYNCODE Desktop — Phase 1 Doctor prototype"
+version = "0.2.0"
+description = "SYNCODE Desktop — Doctor and read-only sync preview"
 edition = "2021"
 rust-version = "1.80"
 publish = false

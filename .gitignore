@@ -15,3 +15,4 @@ desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/resources/python/
 desktop/src-tauri/resources/syncode/
+dist/

@@ -1,11 +1,13 @@
-// SYNCODE Desktop — Diagnóstico. Renders the validated Doctor outcome from the
-// single `run_doctor` command. All data reaches the DOM through textContent.
+// SYNCODE Desktop — Diagnóstico y Sincronización (vista previa, solo lectura).
+// Renders validated outcomes from the read-only commands `run_doctor` and
+// `preview_sync`. All data reaches the DOM through textContent.
 "use strict";
 
 (() => {
   const $ = (id) => document.getElementById(id);
   const SVG = "http://www.w3.org/2000/svg";
 
+  // ---- vocabulary -------------------------------------------------------------
   // Raw Doctor statuses → Spanish label and severity level.
   const STATUS = {
     current: ["Al día", "ok"],
@@ -31,6 +33,9 @@
     unsafe: ["Archivo lock en ruta insegura", "block"],
   };
   const NEXT_STEP = {
+    // The managed block of the instructions file is replaced by a sync; the
+    // personal content outside the markers is preserved.
+    "instructions:modified": "El bloque gestionado difiere del de esta versión. Una sincronización lo reemplazaría y conservaría el contenido fuera de los marcadores. Compruébalo en Sincronización.",
     modified: "Revisa los cambios locales; SYNCODE no los sobrescribirá.",
     "unsafe-or-unreadable": "Inspección manual de la ruta (enlace simbólico, junction o permisos).",
     "transaction:pending-recovery": "Ejecuta «python scripts/sync.py --recover» y vuelve a diagnosticar.",
@@ -42,35 +47,62 @@
     claude: { name: "Claude Code", instructions: "~/.claude/CLAUDE.md" },
     codex: { name: "Codex", instructions: "~/.codex/AGENTS.md" },
   };
-  const TRANSPORT = {
-    bundleIncomplete: ["Falta el entorno de ejecución integrado",
-      "La instalación de SYNCODE Desktop está incompleta: no se encontró el runtime Python o el núcleo de Doctor. Reinstala la aplicación."],
-    spawnFailed: ["La app no pudo iniciar Doctor",
-      "El sistema no permitió iniciar el runtime Python integrado."],
-    timeout: ["Doctor no respondió a tiempo",
-      "El diagnóstico superó el tiempo máximo y se detuvo. Ningún archivo fue modificado."],
-    outputTooLarge: ["Respuesta demasiado grande",
-      "La respuesta de Doctor superó el tamaño permitido y se descartó."],
-    noOutput: ["Doctor terminó sin respuesta",
-      "El proceso terminó sin un resultado JSON. El estado de la instalación es desconocido."],
-    invalidJson: ["Respuesta no válida",
-      "La respuesta de Doctor no es JSON válido y se descartó."],
-    contractMismatch: ["Versión de Doctor incompatible",
-      "La respuesta no cumple el contrato schemaVersion 1 que espera esta versión de la app."],
-    processFailed: ["El proceso terminó de forma inesperada",
-      "El runtime Python finalizó con un código fuera del contrato de Doctor."],
-    busy: ["Diagnóstico en curso",
-      "Ya hay un diagnóstico ejecutándose. Espera a que termine."],
-    bridge: ["La interfaz no puede comunicarse con la app",
-      "El puente con SYNCODE Desktop no está disponible en esta ventana."],
+  // Transport failures, parameterized by the subject that could not run.
+  function transportText(code, subject) {
+    const S = subject;
+    const table = {
+      bundleIncomplete: ["Falta el entorno de ejecución integrado",
+        "SYNCODE Desktop está incompleto: no se encontró el runtime Python o el núcleo. Reinstala la aplicación o, si usas el paquete portable, extrae el ZIP completo en una carpeta propia."],
+      spawnFailed: [`La app no pudo iniciar ${S.name}`, "El sistema no permitió iniciar el runtime Python integrado."],
+      timeout: [`${S.Name} no respondió a tiempo`, "Se superó el tiempo máximo y el proceso se detuvo. Ningún archivo fue modificado."],
+      outputTooLarge: ["Respuesta demasiado grande", `La respuesta de ${S.name} superó el tamaño permitido y se descartó.`],
+      noOutput: [`${S.Name} terminó sin respuesta`, "El proceso terminó sin un resultado JSON. El estado es desconocido."],
+      invalidJson: ["Respuesta no válida", `La respuesta de ${S.name} no es JSON válido y se descartó.`],
+      contractMismatch: [`Respuesta de ${S.name} incompatible`, "La respuesta no cumple el contrato schemaVersion 1 que espera esta versión de la app y se descartó."],
+      processFailed: ["El proceso terminó de forma inesperada", "El runtime Python finalizó con un código fuera del contrato."],
+      busy: ["Otra operación en curso", "SYNCODE ya está ejecutando un diagnóstico o una vista previa. Espera a que termine."],
+      bridge: ["La interfaz no puede comunicarse con la app", "El puente con SYNCODE Desktop no está disponible en esta ventana."],
+    };
+    return table[code] || ["La app no pudo comunicarse con el núcleo", "Fallo de transporte no reconocido."];
+  }
+  const SUBJECTS = {
+    diagnostico: { name: "Doctor", Name: "Doctor", what: "el diagnóstico", notEvaluated: "Esto no es un resultado del diagnóstico: no se evaluó el estado de la instalación." },
+    sincronizacion: { name: "el planificador", Name: "El planificador", what: "la vista previa", notEvaluated: "Esto no es una vista previa: no se calculó ningún plan." },
   };
+  const KIND = {
+    CREATE: ["Se creará", "info"],
+    UPDATE: ["Se actualizará", "info"],
+    UPGRADE: ["Se actualizará la skill (versión v0.1 reconocida)", "warn"],
+  };
+  const REFUSAL = {
+    "skill-upgrade-available": "Una skill instalada difiere de la versión actual. Si es idéntica a la versión v0.1 reconocida, puedes previsualizar su actualización.",
+    "skill-modified": "Una skill instalada fue modificada localmente o no corresponde a una versión reconocida. SYNCODE no la sobrescribirá: requiere revisión manual.",
+    "destination-conflict": "Un destino gestionado ya contiene archivos o carpetas ajenos a SYNCODE. Requiere revisión manual.",
+    "transaction-pending": "Hay una transacción de instalación sin terminar. Revísala y ejecuta «python scripts/sync.py --recover» antes de planificar.",
+    "managed-markers-invalid": "Los marcadores del bloque gestionado de un archivo de instrucciones están repetidos, incompletos o desordenados. Revísalo manualmente.",
+    "unsafe-path": "Un destino es un enlace simbólico, una junction o una ruta no permitida. Requiere inspección manual.",
+    "io-error": "El sistema de archivos devolvió un error al leer un destino.",
+    "encoding-error": "Un archivo existente no se pudo leer como UTF-8.",
+    interrupted: "La planificación se interrumpió antes de terminar.",
+    "invalid-arguments": "La app envió una combinación de opciones no válida (error de integración).",
+  };
+  const TARGET_LABEL = { both: "Claude Code y Codex", claude: "Solo Claude Code", codex: "Solo Codex" };
 
-  // `homes`: spellings of the user's home seen so far (USERPROFILE from the
-  // shell and Doctor's resolved home), all shortened to "~" for privacy.
-  const state = { runId: 0, running: false, lastGood: null, current: null, homes: new Set() };
+  // ---- shared state -----------------------------------------------------------
+  // `homes`: spellings of the user's home seen so far (USERPROFILE and the
+  // core's resolved home), all shortened to "~" for privacy.
+  const homes = new Set();
   const rawPath = new WeakMap();
+  const screens = {
+    diagnostico: { title: "Diagnóstico", runId: 0, running: false, current: null, lastGood: null },
+    sincronizacion: { title: "Sincronización", runId: 0, running: false, current: null, lastGood: null },
+  };
+  let active = "diagnostico";
+  // Commands are serialized: the core runs one at a time, so a request made
+  // while the other screen is busy waits for its turn instead of failing.
+  let queue = Promise.resolve();
 
-  // ---- small DOM helpers ---------------------------------------------------
+  // ---- DOM helpers ------------------------------------------------------------
   function el(tag, attrs, ...children) {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs || {})) {
@@ -92,6 +124,7 @@
     block: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M8.5 8.5l7 7M15.5 8.5l-7 7",
     neutral: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M8 12h8",
     unknown: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 16.8v.1",
+    info: "M7 3h7l4 4v14H7zM14 3v4h4M10 12h5M10 16h5",
     failure: "M4 6h16v12H4zM4 10h16M8 14h3",
   };
   function icon(level) {
@@ -123,14 +156,20 @@
       el("span", { class: "label", text: info.label }));
   }
 
+  function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+
+  function formatTime(date) {
+    return date.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
   // ---- privacy: shorten the user's home to "~" unless asked otherwise ------
   function showFull() { return $("show-paths").checked; }
   function shorten(text) {
     if (typeof text !== "string" || showFull()) return text;
     // Longest first, so a short spelling never pre-empts a longer resolved home.
-    const homes = [...state.homes].filter(Boolean).sort((a, b) => b.length - a.length);
+    const sorted = [...homes].filter(Boolean).sort((a, b) => b.length - a.length);
     let out = text;
-    for (const home of homes) {
+    for (const home of sorted) {
       const needle = home.toLowerCase();
       const lower = out.toLowerCase();
       let result = "";
@@ -161,30 +200,122 @@
     }
   }
 
-  // ---- derive what needs review from a validated report --------------------
+  // ---- reusable components ------------------------------------------------------
+  function verdictPanel(prefix, level, title, sub, extra) {
+    return el("section", { class: `panel verdict level-${level}`, "aria-labelledby": `${prefix}-verdict` },
+      icon(level),
+      el("div", {},
+        el("h2", { id: `${prefix}-verdict`, text: title }),
+        sub ? el("p", { class: "sub", text: sub }) : null,
+        extra || null));
+  }
+
+  function loadingPanel(label) {
+    return el("section", { class: "panel loading", "aria-label": label },
+      el("span", { class: "spinner", "aria-hidden": "true" }), el("p", { text: `${label}…` }));
+  }
+
+  function groupNode(id, title, summary, entries, open, renderRow) {
+    const button = el("button", { type: "button", "aria-expanded": open ? "true" : "false", "aria-controls": id },
+      el("span", {}, el("strong", { text: title }), summary ? ` · ${summary}` : ""),
+      el("span", { class: "chev", "aria-hidden": "true", text: "›" }));
+    const list = el("ul", { class: "rows", id }, entries.map(renderRow));
+    list.hidden = !open;
+    button.addEventListener("click", () => {
+      const next = button.getAttribute("aria-expanded") !== "true";
+      button.setAttribute("aria-expanded", String(next));
+      list.hidden = !next;
+    });
+    return el("div", { class: "group" }, button, list);
+  }
+
+  // Moves focus to a row, opening its collapsed group first. A button (not a
+  // link) so it never interferes with the #screen routing.
+  function jumpButton(anchor, text) {
+    const button = el("button", { type: "button", class: "link", text });
+    button.addEventListener("click", () => {
+      const target = document.getElementById(anchor);
+      if (!target) return;
+      const list = target.closest("ul[hidden]");
+      if (list) {
+        list.hidden = false;
+        const toggle = document.querySelector(`[aria-controls="${list.id}"]`);
+        if (toggle) toggle.setAttribute("aria-expanded", "true");
+      }
+      target.scrollIntoView({ block: "center" });
+      target.focus();
+    });
+    return button;
+  }
+
+  function failurePanel(screen, outcome, at, retry) {
+    const subject = SUBJECTS[screen];
+    const prefix = screen === "diagnostico" ? "diag" : "sync";
+    let origin, title, body;
+    const rows = [];
+    if (outcome.kind === "doctorError") {
+      const interrupted = outcome.exitCode === 130;
+      origin = interrupted ? "Diagnóstico interrumpido" : "Doctor informó un error";
+      title = "No se pudo completar el diagnóstico";
+      body = interrupted ? "Doctor se interrumpió antes de terminar." : outcome.message || "Doctor no pudo completar la inspección.";
+      rows.push(["Código", outcome.errorCode], ["Salida", outcome.exitCode]);
+    } else {
+      const code = outcome.kind === "transport" ? outcome.code : "contractMismatch";
+      [title, body] = transportText(code, subject);
+      origin = code === "busy" ? "Espera" : `La app no pudo comunicarse con ${subject.name}`;
+      rows.push(["Código", code]);
+      if (outcome.exitCode !== null && outcome.exitCode !== undefined) rows.push(["Salida del proceso", outcome.exitCode]);
+      if (outcome.detail) rows.push(["Detalle", outcome.detail]);
+    }
+    rows.push(["Hora", formatTime(at)]);
+    const retryButton = el("button", { type: "button", class: "primary", text: "Reintentar" });
+    retryButton.addEventListener("click", () => retry(retryButton));
+    return el("section", { class: "panel failure", "aria-labelledby": `${prefix}-fail` },
+      icon("failure"),
+      el("div", {},
+        el("p", { class: "origin", text: origin }),
+        el("h2", { id: `${prefix}-fail`, text: title }),
+        pathText("p", {}, body),
+        el("p", { class: "note", text: subject.notEvaluated }),
+        el("details", {}, el("summary", { text: "Detalle técnico" }),
+          el("dl", {}, rows.map(([k, v]) => [el("dt", { text: k }), pathText("dd", {}, String(v))]))),
+        el("div", { class: "actions" }, retryButton)));
+  }
+
+  function staleResult(screen, render) {
+    const last = screens[screen].lastGood;
+    if (!last) return null;
+    const box = el("details", { class: "stale" },
+      el("summary", { text: `Ver último resultado válido (${formatTime(last.at)}); puede estar desactualizado` }));
+    box.append(render(last.run, last.at, true));
+    return box;
+  }
+
+  // ---- Diagnóstico ------------------------------------------------------------
   function collect(report) {
     const items = [];
     const clients = [];
     for (const key of ["claude", "codex"]) {
       const client = report.clients[key] || {};
       const meta = CLIENTS[key];
-      const rows = [];
       const exe = client.executable || {};
-      rows.push({ id: `${key}-cli`, name: "CLI", hint: exe.path || null,
-        info: describe(EXECUTABLE, exe.status) });
-      rows.push({ id: `${key}-instructions`, name: "Instrucciones globales", hint: meta.instructions,
-        info: describe(STATUS, (client.instructions || {}).status) });
+      const rows = [
+        { id: `diag-${key}-cli`, name: "CLI", hint: exe.path || null, info: describe(EXECUTABLE, exe.status) },
+        { id: `diag-${key}-instructions`, name: "Instrucciones globales", hint: meta.instructions,
+          info: describe(STATUS, (client.instructions || {}).status), instructions: true },
+      ];
       const groups = [];
       for (const [field, title] of [["skills", "Skills"], ["specialists", "Especialistas"]]) {
         const entries = Object.entries(client[field] || {}).map(([name, value]) => ({
-          id: `${key}-${field}-${name}`, name, info: describe(STATUS, (value || {}).status),
+          id: `diag-${key}-${field}-${name}`, name, info: describe(STATUS, (value || {}).status),
         }));
         groups.push({ field, title, entries });
       }
       for (const row of [rows[1], ...groups.flatMap((g) => g.entries)]) {
         if (row.info.level === "block" || row.info.level === "unknown") {
+          const specific = row.instructions ? NEXT_STEP[`instructions:${row.info.raw}`] : null;
           items.push({ where: `${meta.name} · ${row.name}`, info: row.info, anchor: row.id,
-            next: NEXT_STEP[row.info.raw] || "Revisión manual." });
+            next: specific || NEXT_STEP[row.info.raw] || "Revisión manual." });
         }
       }
       clients.push({ key, meta, rows, groups });
@@ -193,22 +324,30 @@
     const lock = describe(LOCK, report.lock);
     for (const [prefix, info, label] of [["transaction", tx, "Transacción"], ["lock", lock, "Archivo lock"]]) {
       if (info.level === "block" || info.level === "unknown") {
-        items.push({ where: `Sincronización · ${label}`, info, anchor: `sync-${prefix}`,
+        items.push({ where: `Estado de sincronización · ${label}`, info, anchor: `diag-state-${prefix}`,
           next: NEXT_STEP[`${prefix}:${info.raw}`] || "Revisión manual." });
       }
     }
     return { items, clients, tx, lock };
   }
 
-  function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+  function rank(level) { return { block: 0, unknown: 1, warn: 2, neutral: 3, info: 3, ok: 4 }[level] ?? 1; }
 
-  // ---- renderers --------------------------------------------------------------
-  function renderReport(run, at) {
+  function diagRow(row) {
+    return el("li", { class: "row", id: row.id, tabindex: "-1" },
+      el("span", { class: "name" }, row.name,
+        row.hint ? pathText("span", { class: "hint path" }, row.hint) : null),
+      statusChip(row.info));
+  }
+
+  function renderReport(run, at, nested) {
     const report = run.outcome.report;
     const summary = report.summary || {};
     const blockers = Number(summary.blockers) || 0;
     const derived = collect(report);
     const frag = document.createDocumentFragment();
+    // Nested (stale) copies must not duplicate ids.
+    const id = (value) => (nested ? null : value);
 
     const notes = [];
     if (summary.upgradeAvailable) notes.push(plural(summary.upgradeAvailable, "actualización disponible", "actualizaciones disponibles"));
@@ -222,213 +361,423 @@
     const title = blockers > 0
       ? `Diagnóstico completado: ${plural(blockers, "elemento requiere revisión", "elementos requieren revisión")}`
       : "Diagnóstico completado: sin elementos que requieran revisión";
-    frag.append(el("section", { class: `panel verdict level-${level}`, "aria-labelledby": "verdict-title" },
-      icon(level),
-      el("div", {},
-        el("h2", { id: "verdict-title", text: title }),
-        el("p", { class: "sub", text: notes.length ? notes.join(" · ") : "Sin componentes informados." }))));
+    frag.append(verdictPanel(nested ? "diag-old" : "diag", level, title,
+      notes.length ? notes.join(" · ") : "Sin componentes informados."));
 
-    frag.append(el("section", { class: "panel strip", "aria-labelledby": "sync-title" },
-      el("h2", { id: "sync-title", text: "Estado de sincronización" }),
-      el("span", { id: "sync-transaction" }, "Transacción: ", statusChip(derived.tx)),
-      el("span", { id: "sync-lock" }, "Archivo lock: ", statusChip(derived.lock))));
+    frag.append(el("section", { class: "panel strip", "aria-label": "Estado de sincronización" },
+      el("h2", { text: "Estado de sincronización" }),
+      el("span", { id: id("diag-state-transaction"), tabindex: "-1" }, "Transacción: ", statusChip(derived.tx)),
+      el("span", { id: id("diag-state-lock"), tabindex: "-1" }, "Archivo lock: ", statusChip(derived.lock))));
 
     if (blockers > 0 || derived.items.length) {
       const list = el("ul", {}, derived.items.map((item) => el("li", {},
-        el("div", { class: "what" }, jumpLink(item.anchor, item.where), " — ", statusChip(item.info)),
+        el("div", { class: "what" }, nested ? item.where : jumpButton(item.anchor, item.where), " — ", statusChip(item.info)),
         el("p", { class: "next", text: item.next }))));
       const extra = blockers - derived.items.filter((i) => i.info.level === "block").length;
-      frag.append(el("section", { class: "panel review", "aria-labelledby": "review-title" },
-        el("h2", { id: "review-title", text: "Requieren revisión" }),
+      frag.append(el("section", { class: "panel review", "aria-label": "Requieren revisión" },
+        el("h2", { text: "Requieren revisión" }),
         list,
         extra > 0 ? el("p", { class: "note", text: `Doctor informa ${plural(extra, "elemento adicional", "elementos adicionales")} sin detalle en esta versión de la app.` }) : null,
-        el("p", { class: "note", text: "Esta pantalla no aplica cambios. Las acciones sugeridas se realizan desde la línea de comandos." })));
+        el("p", { class: "note", text: "Esta pantalla no aplica cambios." })));
     }
 
     const cards = el("div", { class: "clients" });
     for (const client of derived.clients) {
       const all = [client.rows[1], ...client.groups.flatMap((g) => g.entries)];
       const ok = all.filter((r) => r.info.level === "ok").length;
-      const card = el("section", { class: "panel client", "aria-labelledby": `${client.key}-title` },
-        el("header", {}, el("h3", { id: `${client.key}-title`, text: client.meta.name }),
+      const card = el("section", { class: "panel client", "aria-label": client.meta.name },
+        el("header", {}, el("h3", { text: client.meta.name }),
           el("span", { class: "count", text: `${ok} de ${all.length} al día` })));
-      card.append(el("ul", { class: "rows" }, client.rows.map(rowNode)));
-      for (const group of client.groups) card.append(groupNode(client.key, group));
+      const rows = nested ? client.rows.map((r) => ({ ...r, id: null })) : client.rows;
+      card.append(el("ul", { class: "rows" }, rows.map(diagRow)));
+      for (const group of client.groups) {
+        const entries = [...group.entries].sort((a, b) => rank(a.info.level) - rank(b.info.level))
+          .map((e) => (nested ? { ...e, id: null } : e));
+        const okCount = entries.filter((e) => e.info.level === "ok").length;
+        const attention = entries.some((e) => e.info.level !== "ok");
+        card.append(groupNode(`${nested ? "old-" : ""}diag-${client.key}-${group.field}-list`, group.title,
+          `${okCount} de ${entries.length} al día`, entries, attention, diagRow));
+      }
       cards.append(card);
     }
     frag.append(cards);
     frag.append(el("p", { class: "note" },
       "Home analizado: ", pathText("span", { class: "path" }, report.home),
-      ` · Instantánea de ${formatTime(at)}; los cambios posteriores no se reflejan. La detección de CLI no verifica versiones.`));
+      ` · Instantánea de las ${formatTime(at)}; los cambios posteriores no se reflejan. La detección de CLI no verifica versiones.`));
     return frag;
   }
 
-  function jumpLink(anchor, text) {
-    const link = el("a", { href: `#${anchor}`, text });
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      const target = document.getElementById(anchor);
-      if (!target) return;
-      const list = target.closest("ul[hidden]");
-      if (list) {
-        list.hidden = false;
-        const toggle = document.querySelector(`[aria-controls="${list.id}"]`);
-        if (toggle) toggle.setAttribute("aria-expanded", "true");
-      }
-      target.scrollIntoView({ block: "center" });
-      target.focus();
-    });
-    return link;
+  function doctorFoundUpgrades() {
+    const last = screens.diagnostico.lastGood;
+    return Boolean(last && Number((last.run.outcome.report.summary || {}).upgradeAvailable) > 0);
   }
 
-  function rowNode(row) {
-    return el("li", { class: "row", id: row.id, tabindex: "-1" },
-      el("span", { class: "name" }, row.name,
-        row.hint ? pathText("span", { class: "hint path" }, row.hint) : null),
-      statusChip(row.info));
+  // ---- Sincronización ---------------------------------------------------------
+  function readOptions() {
+    const form = $("sync-form");
+    const target = (form.querySelector("input[name=target]:checked") || {}).value || "both";
+    return {
+      target: Object.prototype.hasOwnProperty.call(TARGET_LABEL, target) ? target : "both",
+      specialists: $("opt-specialists").checked,
+      upgradeSkills: $("opt-upgrade").checked,
+    };
   }
 
-  function groupNode(clientKey, group) {
-    const id = `${clientKey}-${group.field}-list`;
-    const ok = group.entries.filter((e) => e.info.level === "ok").length;
-    const attention = group.entries.some((e) => e.info.level !== "ok");
-    const sorted = [...group.entries].sort((a, b) => rank(a.info.level) - rank(b.info.level));
-    const button = el("button", { type: "button", "aria-expanded": attention ? "true" : "false", "aria-controls": id },
-      el("span", {}, el("strong", { text: group.title }), ` · ${ok} de ${group.entries.length} al día`),
-      el("span", { class: "chev", "aria-hidden": "true", text: "›" }));
-    const list = el("ul", { class: "rows", id }, sorted.map(rowNode));
-    list.hidden = !attention;
-    button.addEventListener("click", () => {
-      const open = button.getAttribute("aria-expanded") !== "true";
-      button.setAttribute("aria-expanded", String(open));
-      list.hidden = !open;
-    });
-    return el("div", { class: "group" }, button, list);
+  function sameOptions(a, b) {
+    return a && b && a.target === b.target && a.specialists === b.specialists && a.upgradeSkills === b.upgradeSkills;
   }
 
-  function rank(level) { return { block: 0, unknown: 1, warn: 2, neutral: 3, ok: 4 }[level] ?? 1; }
+  function scopeText(options) {
+    return [TARGET_LABEL[options.target] || options.target,
+      options.specialists ? "con especialistas" : "sin especialistas",
+      options.upgradeSkills ? "con actualizaciones de skills v0.1" : "sin actualizaciones de skills"].join(" · ");
+  }
 
-  function renderFailure(run, at) {
-    const outcome = run.outcome;
-    let origin, title, body;
-    const rows = [];
-    if (outcome.kind === "doctorError") {
-      const interrupted = outcome.exitCode === 130;
-      origin = interrupted ? "Diagnóstico interrumpido" : "Doctor informó un error";
-      title = "No se pudo completar el diagnóstico";
-      body = interrupted ? "Doctor se interrumpió antes de terminar." : outcome.message || "Doctor no pudo completar la inspección.";
-      rows.push(["Código", outcome.errorCode], ["Salida", outcome.exitCode]);
-    } else {
-      const code = outcome.kind === "transport" ? outcome.code : "contractMismatch";
-      const [what, text] = TRANSPORT[code] || ["La app no pudo comunicarse con Doctor", "Fallo de transporte no reconocido."];
-      origin = code === "busy" ? "Espera" : "La app no pudo comunicarse con Doctor";
-      title = what;
-      body = text;
-      rows.push(["Código", code]);
-      if (outcome.exitCode !== null && outcome.exitCode !== undefined) rows.push(["Salida del proceso", outcome.exitCode]);
-      if (outcome.detail) rows.push(["Detalle", outcome.detail]);
+  function cliEquivalent(options) {
+    return ["python scripts/sync.py --preview", `--target ${options.target}`,
+      options.specialists ? "--specialists" : null, options.upgradeSkills ? "--upgrade-skills" : null]
+      .filter(Boolean).join(" ");
+  }
+
+  function componentLabel(change) {
+    const name = change.componentName;
+    switch (change.componentType) {
+      case "instructions": return "Instrucciones globales";
+      case "skill": return `Skill ${name || ""}`.trim();
+      case "specialist": return `Especialista ${name || ""}`.trim();
+      default: return `Componente desconocido (${change.componentType})`;
     }
-    rows.push(["Hora", formatTime(at)]);
-    const retry = el("button", { type: "button", class: "primary", text: "Reintentar" });
-    retry.addEventListener("click", () => runDiagnosis(retry));
+  }
+
+  function changeAction(change) {
+    if (change.kind === "UPDATE" && change.componentType === "instructions") {
+      return { label: "Se actualizará la sección gestionada; el resto del archivo se conserva", level: "info" };
+    }
+    const known = Object.prototype.hasOwnProperty.call(KIND, change.kind) ? KIND[change.kind] : null;
+    return known ? { label: known[0], level: known[1] } : { label: `Tipo desconocido (${change.kind})`, level: "unknown" };
+  }
+
+  function homePath(home, relative) {
+    const sep = home.includes("\\") ? "\\" : "/";
+    return home.replace(/[\\/]+$/, "") + sep + relative.split("/").join(sep);
+  }
+
+  function renderPlan(run, at, nested) {
+    const o = run.outcome;
     const frag = document.createDocumentFragment();
-    frag.append(el("section", { class: "panel failure", role: "alert", "aria-labelledby": "fail-title" },
-      icon("failure"),
-      el("div", {},
-        el("p", { class: "origin", text: origin }),
-        el("h2", { id: "fail-title", text: title }),
-        pathText("p", {}, body),
-        el("p", { class: "note", text: "Esto no es un resultado del diagnóstico: no se evaluó el estado de la instalación." }),
-        el("details", {}, el("summary", { text: "Detalle técnico" }),
-          el("dl", {}, rows.map(([k, v]) => [el("dt", { text: k }), pathText("dd", {}, String(v))]))),
-        el("div", { class: "actions" }, retry))));
-    if (state.lastGood) {
-      const stale = el("details", { class: "stale" },
-        el("summary", { text: `Ver último resultado válido (${formatTime(state.lastGood.at)}); puede estar desactualizado` }));
-      stale.append(renderReport(state.lastGood.run, state.lastGood.at));
-      frag.append(stale);
+    const prefix = nested ? "sync-old" : "sync";
+    if (typeof o.home === "string") homes.add(o.home);
+
+    if (o.status === "unchanged") {
+      frag.append(verdictPanel(prefix, "ok", "Vista previa: sin cambios",
+        `No hay nada que sincronizar para: ${scopeText(o.options)}.`));
+    } else {
+      const counts = {};
+      for (const c of o.changes) counts[c.kind] = (counts[c.kind] || 0) + 1;
+      const parts = [];
+      if (counts.CREATE) parts.push(plural(counts.CREATE, "se creará", "se crearán"));
+      if (counts.UPDATE) parts.push(plural(counts.UPDATE, "se actualizará", "se actualizarán"));
+      if (counts.UPGRADE) parts.push(plural(counts.UPGRADE, "actualización de skill", "actualizaciones de skills"));
+      const other = o.changes.length - (counts.CREATE || 0) - (counts.UPDATE || 0) - (counts.UPGRADE || 0);
+      if (other > 0) parts.push(plural(other, "de tipo desconocido", "de tipo desconocido"));
+      frag.append(verdictPanel(prefix, "info",
+        `Vista previa: ${plural(o.changes.length, "cambio propuesto", "cambios propuestos")} · nada se ha escrito`,
+        parts.join(" · "),
+        el("p", { class: "sub", text: `Alcance: ${scopeText(o.options)}.` })));
+    }
+
+    if (o.recoveryRequired === true) {
+      frag.append(el("section", { class: "panel notice-panel level-warn" }, icon("warn"),
+        el("p", { text: "Apareció una transacción de instalación mientras se calculaba la vista previa (otra herramienta puede estar aplicando cambios). Esta vista previa puede no reflejar el estado final: revisa Diagnóstico." })));
+    } else if (o.recoveryRequired !== false) {
+      frag.append(el("p", { class: "note", text: "No se pudo comprobar si había una transacción en curso al terminar la vista previa." }));
+    }
+
+    if (o.changes.length) {
+      const groups = [
+        { key: "claude", title: "Claude Code", entries: [] },
+        { key: "codex", title: "Codex", entries: [] },
+        { key: "other", title: "Otros archivos", entries: [] },
+      ];
+      for (const change of o.changes) {
+        const group = groups.find((g) => g.key === change.target) || groups[2];
+        group.entries.push(change);
+      }
+      // Every change is shown exactly once.
+      const shown = groups.reduce((n, g) => n + g.entries.length, 0);
+      const cards = el("div", { class: "clients" });
+      for (const group of groups.filter((g) => g.entries.length)) {
+        const card = el("section", { class: "panel client", "aria-label": `${group.title}: cambios propuestos` },
+          el("header", {}, el("h3", { text: group.title }),
+            el("span", { class: "count", text: plural(group.entries.length, "cambio", "cambios") })));
+        card.append(el("ul", { class: "rows" }, group.entries.map((change) => {
+          const action = changeAction(change);
+          return el("li", { class: "row" },
+            el("span", { class: "name" }, componentLabel(change),
+              pathText("span", { class: "hint path" }, homePath(o.home, change.path))),
+            statusChip(action));
+        })));
+        cards.append(card);
+      }
+      frag.append(cards);
+      if (shown !== o.changes.length) {
+        frag.append(el("p", { class: "note", text: "Algunos cambios no pudieron agruparse." }));
+      }
+    }
+
+    const technical = nested ? null : el("details", { class: "technical", "data-plan-details": true },
+      el("summary", { text: "Detalle técnico" }),
+      el("dl", {},
+        el("dt", { text: "Identificador del plan (técnico)" }),
+        el("dd", {}, el("code", { text: o.planId })),
+        el("dt", { text: "Qué significa" }),
+        el("dd", { text: "Identifica este lote exacto de cambios. No autoriza ninguna ejecución, no se usa en esta versión y deja de ser válido si cambia cualquier archivo implicado." }),
+        el("dt", { text: "Equivalente en CLI (desde un checkout de SYNCODE)" }),
+        el("dd", {}, el("code", { text: cliEquivalent(o.options) })),
+        el("dt", { text: "Home analizado" }),
+        pathText("dd", {}, o.home)));
+    if (technical) frag.append(technical);
+    frag.append(el("p", { class: "note" },
+      `Generada a las ${formatTime(at)}. Es una instantánea: los archivos pueden cambiar después. `,
+      "Esta versión no aplica cambios; el CLI recalcula el plan al ejecutarse."));
+    if (!nested) {
+      frag.prepend(el("p", { class: "panel notice-panel level-warn stale-notice", hidden: true, "data-stale-notice": true },
+        "Esta vista previa corresponde a otras opciones. Genérala de nuevo para ver el plan actual."));
     }
     return frag;
   }
 
-  function formatTime(date) {
-    return date.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  function renderRefusal(run, at) {
+    const o = run.outcome;
+    const frag = document.createDocumentFragment();
+    const explanation = REFUSAL[o.code] || `El planificador rechazó la vista previa (${o.code}).`;
+    const actions = el("div", { class: "actions" });
+    if (o.code === "skill-upgrade-available" && !o.options.upgradeSkills) {
+      const enable = el("button", { type: "button", class: "link", text: "Activar «Previsualizar actualizaciones de skills v0.1»" });
+      enable.addEventListener("click", () => {
+        $("opt-upgrade").checked = true;
+        $("opt-upgrade").dispatchEvent(new Event("change", { bubbles: true }));
+        $("opt-upgrade").focus();
+      });
+      actions.append(enable);
+    }
+    if (o.code === "transaction-pending") {
+      actions.append(el("a", { href: "#diagnostico", class: "link", text: "Ir a Diagnóstico" }));
+    }
+    frag.append(el("section", { class: "panel verdict level-warn refusal", "aria-labelledby": "sync-refusal" },
+      icon("warn"),
+      el("div", {},
+        el("h2", { id: "sync-refusal", text: "La planificación se detuvo" }),
+        el("p", { text: explanation }),
+        el("p", { class: "sub", text: "Se detiene en el primer conflicto; puede haber otros. No se escribió ningún archivo." }),
+        o.code === "skill-upgrade-available" && !o.options.upgradeSkills
+          ? el("p", { class: "sub", text: "Al activar la vista previa de actualizaciones, una skill modificada localmente seguiría deteniendo la planificación." })
+          : null,
+        actions.childNodes.length ? actions : null,
+        el("details", {}, el("summary", { text: "Detalle técnico" }),
+          el("dl", {},
+            el("dt", { text: "Código" }), el("dd", { text: o.code }),
+            el("dt", { text: "Mensaje del planificador" }), pathText("dd", {}, o.message || "—"),
+            el("dt", { text: "Alcance" }), el("dd", { text: scopeText(o.options) }),
+            el("dt", { text: "Hora" }), el("dd", { text: formatTime(at) }))))));
+    return frag;
   }
 
-  function paint() {
-    const target = $("result");
+  function markStale() {
+    const state = screens.sincronizacion;
+    const current = state.current && state.current.run.outcome;
+    const stale = Boolean(current && current.options && !sameOptions(current.options, readOptions()));
+    const notice = document.querySelector("#sync-result [data-stale-notice]");
+    if (notice) notice.hidden = !stale;
+    const details = document.querySelector("#sync-result [data-plan-details]");
+    if (details) details.hidden = stale; // never show a plan id for other options
+    $("sync-result").classList.toggle("is-stale", stale);
+  }
+
+  // ---- per-screen runner --------------------------------------------------------
+  const SCREENS = {
+    diagnostico: {
+      prefix: "diag",
+      command: "run_doctor",
+      args: () => undefined,
+      busy: "Diagnosticando",
+      paint(run, at) {
+        return run.outcome.kind === "report" ? renderReport(run, at, false) : [
+          failurePanel("diagnostico", run.outcome, at, (b) => runScreen("diagnostico", b)),
+          staleResult("diagnostico", renderReport),
+        ];
+      },
+      good: (run) => run.outcome.kind === "report",
+      announce(run) {
+        const o = run.outcome;
+        if (o.kind === "report") {
+          const n = Number(o.report.summary.blockers) || 0;
+          return n ? `Diagnóstico completado: ${plural(n, "elemento requiere revisión", "elementos requieren revisión")}.`
+            : "Diagnóstico completado: sin elementos que requieran revisión.";
+        }
+        return "No se pudo completar el diagnóstico.";
+      },
+      meta: (at, seconds) => `Último diagnóstico: ${formatTime(at)}${seconds}.`,
+      after() {
+        $("upgrade-hint").hidden = !doctorFoundUpgrades();
+      },
+    },
+    sincronizacion: {
+      prefix: "sync",
+      command: "preview_sync",
+      args: () => ({ options: readOptions() }),
+      busy: "Calculando la vista previa",
+      paint(run, at) {
+        if (run.outcome.kind === "plan") return renderPlan(run, at, false);
+        if (run.outcome.kind === "plannerRefusal") return renderRefusal(run, at);
+        return [failurePanel("sincronizacion", run.outcome, at, (b) => runScreen("sincronizacion", b)),
+          staleResult("sincronizacion", renderPlan)];
+      },
+      good: (run) => run.outcome.kind === "plan",
+      announce(run) {
+        const o = run.outcome;
+        if (o.kind === "plan") {
+          return o.status === "unchanged" ? "Vista previa lista: sin cambios."
+            : `Vista previa lista: ${plural(o.changes.length, "cambio propuesto", "cambios propuestos")}; nada se ha escrito.`;
+        }
+        if (o.kind === "plannerRefusal") return "La planificación se detuvo; no se escribió ningún archivo.";
+        return "No se pudo calcular la vista previa.";
+      },
+      meta: (at, seconds) => `Última vista previa: ${formatTime(at)}${seconds}.`,
+      after: markStale,
+    },
+  };
+
+  function paintScreen(name) {
+    const state = screens[name];
+    const spec = SCREENS[name];
     if (!state.current || state.running) return;
-    const { run, at } = state.current;
-    target.replaceChildren(run.outcome.kind === "report" ? renderReport(run, at) : renderFailure(run, at));
+    const target = $(`${spec.prefix}-result`);
+    const content = spec.paint(state.current.run, state.current.at);
+    target.replaceChildren(...[content].flat().filter(Boolean));
     target.setAttribute("aria-busy", "false");
+    spec.after();
+  }
+
+  function updateFooter(run) {
     const p = run.provenance || {};
     $("foot").textContent = [
-      `SYNCODE Desktop ${p.appVersion || "?"} · prototipo Fase 1`,
+      `SYNCODE Desktop ${p.appVersion || "?"}`,
       p.pythonVersion ? `Python integrado ${p.pythonVersion}` : "Python integrado: desconocido",
       p.sourceCommit ? `núcleo ${p.sourceCommit.slice(0, 12)}` : null,
     ].filter(Boolean).join(" · ");
   }
 
-  function announce(run) {
-    const o = run.outcome;
-    if (o.kind === "report") {
-      const n = Number(o.report.summary.blockers) || 0;
-      return n ? `Diagnóstico completado: ${plural(n, "elemento requiere revisión", "elementos requieren revisión")}.`
-        : "Diagnóstico completado: sin elementos que requieran revisión.";
-    }
-    return "No se pudo completar el diagnóstico.";
-  }
-
-  async function runDiagnosis(focusAfter) {
+  async function runScreen(name, focusAfter) {
+    const state = screens[name];
+    const spec = SCREENS[name];
     if (state.running) return;
-    const button = $("run");
+    const button = $(`${spec.prefix}-run`);
+    const result = $(`${spec.prefix}-result`);
     const id = ++state.runId;
     state.running = true;
     button.setAttribute("aria-disabled", "true");
-    $("result").setAttribute("aria-busy", "true");
-    $("live").textContent = "Diagnosticando…";
-    $("meta").textContent = "Diagnosticando…";
-    if (state.current) { // the first run keeps the static loading panel
-      $("result").replaceChildren(el("section", { class: "panel loading", "aria-label": "Diagnóstico en curso" },
-        el("span", { class: "spinner", "aria-hidden": "true" }), el("p", { text: "Diagnosticando…" })));
-    }
-    let run;
+    result.setAttribute("aria-busy", "true");
+    announce(name, `${spec.busy}…`);
+    if (state.current || name !== "diagnostico") result.replaceChildren(loadingPanel(spec.busy));
+    const args = spec.args(); // options as chosen when the user asked
+    const other = Object.keys(screens).find((key) => key !== name && screens[key].running);
+    if (other) $(`${spec.prefix}-meta`).textContent = `En espera: ${screens[other].title.toLowerCase()} en curso…`;
     const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-    try {
+    const call = queue.then(async () => {
+      $(`${spec.prefix}-meta`).textContent = `${spec.busy}…`;
       if (typeof invoke !== "function") throw new Error("bridge");
-      run = await invoke("run_doctor");
+      return invoke(spec.command, args);
+    });
+    queue = call.catch(() => undefined);
+    let run;
+    try {
+      run = await call;
     } catch (error) {
-      run = { outcome: { kind: "transport", code: "bridge", detail: String(error && error.message || error), exitCode: null } };
+      run = { outcome: { kind: "transport", code: "bridge", detail: String((error && error.message) || error), exitCode: null } };
     }
     state.running = false;
-    if (id !== state.runId) return; // a newer run superseded this one
-    const at = new Date();
-    if (typeof run.userHome === "string") state.homes.add(run.userHome);
-    if (run.outcome.kind === "report" && typeof run.outcome.report.home === "string") {
-      state.homes.add(run.outcome.report.home);
-    }
-    state.current = { run, at };
-    if (run.outcome.kind === "report") state.lastGood = { run, at };
     button.removeAttribute("aria-disabled");
-    paint();
+    if (id !== state.runId) return; // a newer run superseded this one
+    if (run.outcome.kind === "transport" && run.outcome.code === "busy") {
+      // Not a result: keep whatever was shown before and say why.
+      if (state.current) paintScreen(name);
+      else result.replaceChildren(failurePanel(name, run.outcome, new Date(), (b) => runScreen(name, b)));
+      result.setAttribute("aria-busy", "false");
+      $(`${spec.prefix}-meta`).textContent = "Otra operación estaba en curso; vuelve a intentarlo.";
+      announce(name, "Otra operación estaba en curso; no se ejecutó.");
+      return;
+    }
+    const at = new Date();
+    if (typeof run.userHome === "string") homes.add(run.userHome);
+    if (run.outcome.kind === "report" && typeof run.outcome.report.home === "string") homes.add(run.outcome.report.home);
+    state.current = { run, at };
+    if (spec.good(run)) state.lastGood = { run, at };
+    paintScreen(name);
+    updateFooter(run);
     const seconds = typeof run.durationMs === "number" ? ` en ${(run.durationMs / 1000).toFixed(1)} s` : "";
-    $("meta").textContent = `Último diagnóstico: hoy, ${formatTime(at)}${seconds}.`;
-    $("live").textContent = announce(run);
-    // Keep focus on the trigger; a replaced "Reintentar" falls back to the toolbar button.
-    if (focusAfter) (document.contains(focusAfter) ? focusAfter : button).focus();
+    $(`${spec.prefix}-meta`).textContent = spec.meta(at, seconds);
+    announce(name, spec.announce(run));
+    // Keep focus on the trigger if it is still on the visible screen.
+    if (focusAfter && name === active) (document.contains(focusAfter) ? focusAfter : button).focus();
+  }
+
+  function announce(name, text) {
+    // One live region for the whole app; results of a hidden screen are prefixed.
+    $("live").textContent = name === active ? text : `${screens[name].title}: ${text}`;
+  }
+
+  // ---- routing ----------------------------------------------------------------
+  function routeFromHash() {
+    const name = location.hash.replace(/^#/, "");
+    return Object.prototype.hasOwnProperty.call(screens, name) ? name : null;
+  }
+
+  function show(name, moveFocus) {
+    active = name;
+    for (const key of Object.keys(screens)) {
+      $(`screen-${key}`).hidden = key !== name;
+    }
+    for (const link of document.querySelectorAll("nav.sections a")) {
+      if (link.dataset.screen === name) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    }
+    document.title = `SYNCODE — ${screens[name].title}`;
+    if (moveFocus) $(`${SCREENS[name].prefix}-h1`).focus();
+  }
+
+  function onHashChange() {
+    const name = routeFromHash();
+    if (!name) {
+      history.replaceState(null, "", `#${active}`);
+      return;
+    }
+    show(name, true);
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    $("run").addEventListener("click", () => runDiagnosis($("run")));
+    const initial = routeFromHash();
+    if (!initial) history.replaceState(null, "", "#diagnostico");
+    show(initial || "diagnostico", false);
+    window.addEventListener("hashchange", onHashChange);
+
+    $("diag-run").addEventListener("click", () => runScreen("diagnostico", $("diag-run")));
+    $("sync-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      runScreen("sincronizacion", $("sync-run"));
+    });
+    $("sync-form").addEventListener("change", markStale);
     $("show-paths").addEventListener("change", refreshPaths);
     document.addEventListener("keydown", (event) => {
-      // F5 / Ctrl+R re-run the diagnosis instead of reloading the webview.
+      // F5 / Ctrl+R run the active screen's action instead of reloading.
       if (event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r")) {
         event.preventDefault();
-        runDiagnosis($("run"));
+        runScreen(active, $(`${SCREENS[active].prefix}-run`));
       }
     });
     document.addEventListener("contextmenu", (event) => event.preventDefault());
-    runDiagnosis(null);
+    // Diagnóstico runs on start (read-only, no options). The preview runs
+    // only on request, with the options the user chose.
+    runScreen("diagnostico", null);
   });
 })();

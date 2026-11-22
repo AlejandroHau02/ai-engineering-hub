@@ -8,7 +8,9 @@
   modules and a PATH without any Python, to show the bundled runtime does not
   depend on a global interpreter. With -ExpectText the rendered page is read
   through UI Automation, so a window that opens but shows a transport failure
-  instead of a diagnosis fails the check. Writes a PNG and a JSON summary.
+  instead of a diagnosis fails the check. With -Screen sincronizacion the
+  read-only preview is requested through the UI before capturing.
+  Writes a PNG and a JSON summary.
 #>
 param(
   [Parameter(Mandatory)] [string] $Exe,
@@ -17,7 +19,13 @@ param(
   [switch] $Isolated,
   # Fails unless a rendered element's accessible name contains this text
   # (read through UI Automation from the WebView2 accessibility tree).
-  [string] $ExpectText
+  [string] $ExpectText,
+  # Screen to show before capturing. "sincronizacion" opens the section and
+  # presses "Generar vista previa" through UI Automation.
+  [ValidateSet('diagnostico', 'sincronizacion')] [string] $Screen = 'diagnostico',
+  # Run the app with USERPROFILE pointing at this directory (evidence against
+  # a disposable home; the real profile is never involved).
+  [string] $HomeOverride
 )
 $ErrorActionPreference = 'Stop'
 
@@ -41,13 +49,20 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ("syncode-launch-" + [Guid]::NewGui
 New-Item -ItemType Directory -Force $work | Out-Null
 $marker = Join-Path $work 'poison-imported.txt'
 $saved = @{}
+function Set-ProcessEnv([string] $Name, [string] $Value) {
+  if (-not $saved.ContainsKey($Name)) { $saved[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process') }
+  [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
+}
+if ($HomeOverride) {
+  $homePath = (New-Item -ItemType Directory -Force $HomeOverride).FullName
+  Set-ProcessEnv 'USERPROFILE' $homePath
+}
 if ($Isolated) {
   foreach ($name in 'sync', 'json', 'cli_contract', 'doctor', 'specialists') {
     "open(r'$marker', 'a').write(__name__)`nraise SystemExit(99)`n" | Set-Content -Encoding ascii (Join-Path $work "$name.py")
   }
   foreach ($kv in @{ PYTHONPATH = $work; PYTHONHOME = $work; PATH = "$env:SystemRoot\System32;$env:SystemRoot" }.GetEnumerator()) {
-    $saved[$kv.Key] = [Environment]::GetEnvironmentVariable($kv.Key, 'Process')
-    [Environment]::SetEnvironmentVariable($kv.Key, $kv.Value, 'Process')
+    Set-ProcessEnv $kv.Key $kv.Value
   }
 }
 try {
@@ -77,7 +92,40 @@ $title = $proc.MainWindowTitle
 Start-Sleep -Seconds $WaitSeconds
 $handle = $proc.MainWindowHandle
 [void][SyncodeWin]::SetForegroundWindow($handle)
+$root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+
+function Find-Named([string] $Text, [int] $Seconds = 15, [switch] $Exact) {
+  $until = (Get-Date).AddSeconds($Seconds)
+  while ((Get-Date) -lt $until) {
+    $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+      [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($node in $all) {
+      $name = $node.Current.Name
+      if ($name -and (($Exact -and $name -eq $Text) -or (-not $Exact -and $name.Contains($Text)))) { return $node }
+    }
+    Start-Sleep -Milliseconds 400
+  }
+  return $null
+}
+function Invoke-Named([string] $Text) {
+  $node = Find-Named $Text -Exact
+  if (-not $node) { throw "UI element '$Text' not found" }
+  $node.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
+
+if ($Screen -eq 'sincronizacion') {
+  Invoke-Named 'Sincronización'
+  Start-Sleep -Milliseconds 800
+  Invoke-Named 'Generar vista previa'
+}
+$found = $null
+if ($ExpectText) {
+  $node = Find-Named $ExpectText -Seconds 40
+  if ($node) { $found = $node.Current.Name }
+}
 Start-Sleep -Milliseconds 600
+[void][SyncodeWin]::SetForegroundWindow($handle)
+Start-Sleep -Milliseconds 400
 $rect = New-Object SyncodeWin+RECT
 # DWMWA_EXTENDED_FRAME_BOUNDS (9) excludes the invisible resize border.
 if ([SyncodeWin]::DwmGetWindowAttribute($handle, 9, [ref]$rect, 16) -ne 0) { [void][SyncodeWin]::GetWindowRect($handle, [ref]$rect) }
@@ -89,21 +137,6 @@ $outPath = [IO.Path]::GetFullPath($Out)
 New-Item -ItemType Directory -Force (Split-Path $outPath) | Out-Null
 $bitmap.Save($outPath, [System.Drawing.Imaging.ImageFormat]::Png)
 $graphics.Dispose(); $bitmap.Dispose()
-
-$found = $null
-if ($ExpectText) {
-  $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
-  $until = (Get-Date).AddSeconds(15)
-  while (-not $found -and (Get-Date) -lt $until) {
-    $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-      [System.Windows.Automation.Condition]::TrueCondition)
-    foreach ($node in $all) {
-      $name = $node.Current.Name
-      if ($name -and $name.Contains($ExpectText)) { $found = $name; break }
-    }
-    if (-not $found) { Start-Sleep -Milliseconds 500 }
-  }
-}
 
 $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.Id)" | Select-Object -ExpandProperty ExecutablePath)
 [void]$proc.CloseMainWindow()
@@ -117,6 +150,8 @@ $expectOk = (-not $ExpectText) -or [bool]$found
   exe = $exePath
   windowTitle = $title
   isolated = [bool]$Isolated
+  screen = $Screen
+  homeOverride = [bool]$HomeOverride
   poisonImported = $poisoned
   expectText = $ExpectText
   foundText = $found

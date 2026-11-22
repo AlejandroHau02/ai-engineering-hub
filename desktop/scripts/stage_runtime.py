@@ -144,7 +144,14 @@ def source_commit(repo: Path = REPO) -> dict:
     return {"commit": commit, "dirty": dirty}
 
 
-def stage_core(dest: Path, repo: Path = REPO, source: dict | None = None) -> dict:
+def python_hashes(python_dir: Path) -> dict[str, str]:
+    """SHA-256 of every file of the staged interpreter (after the ._pth rewrite)."""
+    return {p.relative_to(python_dir).as_posix(): sha256_file(p)
+            for p in sorted(python_dir.rglob("*")) if p.is_file()}
+
+
+def stage_core(dest: Path, repo: Path = REPO, source: dict | None = None,
+               python_files: dict[str, str] | None = None) -> dict:
     hashes = {}
     for relative in core_sources(repo):
         target = dest.joinpath(*relative.split("/"))
@@ -157,7 +164,7 @@ def stage_core(dest: Path, repo: Path = REPO, source: dict | None = None) -> dic
         "component": "desktop-runtime",
         "source": source if source is not None else source_commit(repo),
         "python": {"version": PYTHON_VERSION, "archive": ARCHIVE_NAME,
-                   "sha256": ARCHIVE_SHA256},
+                   "sha256": ARCHIVE_SHA256, "files": python_files or {}},
         "files": hashes,
     }
     (dest / "BUNDLE_MANIFEST.json").write_text(
@@ -180,7 +187,7 @@ def stage(dest: Path, archive: Path | None, allow_dirty: bool = False,
             archive = work / ARCHIVE_NAME
             download(ARCHIVE_URL, archive)
         stage_python(archive, work / "python")
-        manifest = stage_core(work / "syncode", repo, source)
+        manifest = stage_core(work / "syncode", repo, source, python_hashes(work / "python"))
         _swap_in(work, dest, ("python", "syncode"))
     return manifest
 

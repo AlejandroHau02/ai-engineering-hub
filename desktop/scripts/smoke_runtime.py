@@ -14,8 +14,13 @@ poisoned environment:
   never read or written.
 
 It asserts that ``sys.path``, the executable and ``python312.dll`` all resolve
-inside the copied runtime, that Doctor returns a schemaVersion 1 report and
-that no marker or ``__pycache__`` appears. Prints a JSON evidence record.
+inside the copied runtime, that Doctor returns a schemaVersion 1 report, that
+the read-only sync preview (``sync.py --preview``) returns a plan with
+``transaction.outcome == "not-started"``, that the home stays empty and that
+no marker or ``__pycache__`` appears. Prints a JSON evidence record.
+
+``--app-root`` runs against an already extracted portable package in place
+(no copy), so CI validates exactly what testers unzip.
 """
 from __future__ import annotations
 
@@ -59,17 +64,21 @@ def _clean_path() -> str:
     return os.pathsep.join([str(Path(system_root) / "System32"), system_root])
 
 
-def run(resources: Path, keep: bool = False) -> dict:
+def run(resources: Path, keep: bool = False, in_place: bool = False) -> dict:
     resources = resources.resolve()
     for required in ("python/python.exe", "python/python312._pth",
-                     "syncode/scripts/doctor.py", "syncode/BUNDLE_MANIFEST.json"):
+                     "syncode/scripts/doctor.py", "syncode/scripts/sync.py",
+                     "syncode/BUNDLE_MANIFEST.json"):
         if not (resources / required).is_file():
             raise SystemExit(f"Runtime not staged: missing {required}; run stage_runtime.py")
     base = Path(tempfile.mkdtemp(prefix="syncode-smoke-"))
     try:
-        app = base / "app"
-        shutil.copytree(resources / "python", app / "python")
-        shutil.copytree(resources / "syncode", app / "syncode")
+        if in_place:
+            app = resources
+        else:
+            app = base / "app"
+            shutil.copytree(resources / "python", app / "python")
+            shutil.copytree(resources / "syncode", app / "syncode")
         home = base / "home"
         home.mkdir()
         poison = base / "poison"
@@ -98,6 +107,11 @@ def run(resources: Path, keep: bool = False) -> dict:
                                  str(app / "syncode" / "scripts" / "doctor.py"),
                                  "--target", "both", "--format", "json"], **common)
         report = json.loads(doctor.stdout)
+        preview = subprocess.run([str(python), "-I", "-B",
+                                  str(app / "syncode" / "scripts" / "sync.py"), "--preview",
+                                  "--target", "both", "--specialists", "--format", "json"],
+                                 **common)
+        plan = json.loads(preview.stdout)
 
         runtime_root = str(app).lower()
         problems = []
@@ -120,8 +134,14 @@ def run(resources: Path, keep: bool = False) -> dict:
             problems.append(f"doctor read a different home: {report.get('home')}")
         if list((app / "syncode").rglob("__pycache__")):
             problems.append("__pycache__ written into runtime")
+        if preview.returncode != 0 or plan.get("status") != "planned":
+            problems.append(f"preview exit {preview.returncode} status {plan.get('status')}")
+        if plan.get("transaction", {}).get("outcome") != "not-started":
+            problems.append("preview reported a transaction outcome")
+        if len(plan.get("changes", [])) != 20:
+            problems.append(f"preview planned {len(plan.get('changes', []))} changes, expected 20")
         if list(home.iterdir()):
-            problems.append("doctor wrote into the home directory")
+            problems.append("doctor or preview wrote into the home directory")
         evidence = {
             "ok": not problems, "problems": problems,
             "runtimeOutsideRepo": str(app),
@@ -130,6 +150,10 @@ def run(resources: Path, keep: bool = False) -> dict:
             "doctor": {"exitCode": doctor.returncode, "summary": report.get("summary"),
                        "transaction": report.get("transaction"), "lock": report.get("lock"),
                        "clients": sorted(report.get("clients", {}))},
+            "preview": {"exitCode": preview.returncode, "status": plan.get("status"),
+                        "changes": len(plan.get("changes", [])),
+                        "kinds": sorted({c.get("kind") for c in plan.get("changes", [])}),
+                        "outcome": plan.get("transaction", {}).get("outcome")},
         }
         return evidence
     finally:
@@ -141,11 +165,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--resources", type=Path, default=DEFAULT_RESOURCES)
     parser.add_argument("--keep", action="store_true", help="keep the temporary copy")
+    parser.add_argument("--app-root", type=Path,
+                        help="validate an extracted portable package in place (no copy)")
     args = parser.parse_args(argv)
     if os.name != "nt":
         print("SKIP: the embedded runtime is Windows-only", file=sys.stderr)
         return 0
-    evidence = run(args.resources, args.keep)
+    if args.app_root:
+        evidence = run(args.app_root, args.keep, in_place=True)
+    else:
+        evidence = run(args.resources, args.keep)
     print(json.dumps(evidence, indent=2))
     return 0 if evidence["ok"] else 1
 

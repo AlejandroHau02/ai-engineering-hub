@@ -70,13 +70,14 @@ Código de salida: `0` diagnóstico completado sin bloqueos; `2` bloqueos que re
 
 ```powershell
 python scripts/sync.py --target both --format json
+python scripts/sync.py --preview --target both --format json   # equivalente explícito
 ```
 
-No instala ni actualiza nada. Respuesta JSON:
+No instala ni actualiza nada. `--preview` (Fase 2A) es la forma explícita del dry-run: pertenece al grupo mutuamente excluyente de `--apply` y `--recover`, de modo que cualquier combinación con ellos se rechaza con `invalid-arguments` antes de acceder al disco. Desktop invoca siempre `--preview`. Una vista previa no escribe, renombra ni borra archivos, no crea el lock ni el workspace y no usa red ni subprocesos (`tests/test_sync_preview.py`, con audit hooks de CPython). La planificación se detiene en el **primer** conflicto (`skill-upgrade-available`, `skill-modified`, `destination-conflict`, `transaction-pending`): puede haber otros. Respuesta JSON:
 
 - `schemaVersion: 1`, `product: "SYNCODE"`, `home` (`null` si no llegó a resolverse), `targets`.
 - `status`: `planned`, `unchanged`, `applied`, `recovered`, `no-pending-transaction` o `error`.
-- `changes[]`: `kind` (`CREATE`, `UPDATE`, `UPGRADE`, `APPROVED-CREATE`), ruta **relativa a home**, SHA-256 del contenido a instalar. Nunca contiene contenido de la skill. Si `--apply` falla después de planificar, contiene **lo que se intentó aplicar**; su estado real lo indica `transaction.outcome`. Si el fallo ocurre durante la planificación, es `[]`.
+- `changes[]`: `kind` (`CREATE`, `UPDATE`, `UPGRADE`, `APPROVED-CREATE`), ruta **relativa a home**, SHA-256 del contenido a instalar, `target` (`claude`, `codex` o `null`) y `component` `{type, name}` con `type` `instructions`, `skill`, `specialist`, `approved-skill` o `unknown` (Fase 2A; derivados solo de la ruta y el `kind`, fuera de la huella). Nunca contiene contenido de la skill. El SHA-256 de un `UPDATE` es el del archivo **fusionado** (bloque gestionado público + contenido personal): permite confirmar por fuerza bruta un archivo de instrucciones de baja entropía, así que es dato local igual que la huella; los clientes no deben mostrarlo ni registrarlo. Si `--apply` falla después de planificar, contiene **lo que se intentó aplicar**; su estado real lo indica `transaction.outcome`. Si el fallo ocurre durante la planificación, es `[]`.
 - `events[]`: líneas del registro textual existente capturadas para compatibilidad; son informativas, no un contrato para parsear. Pueden incluir rutas locales de backups, incluso de backups retirados después por un rollback.
 - `transaction`: `{outcome, recoveryRequired}` (ver abajo).
 - `plan`: `{algorithm, fingerprint, expected, matched}` (ver «Plan vinculante»).
@@ -158,6 +159,7 @@ Respuesta: `schemaVersion: 1`, `product`, `status` (`planned`, `unchanged`, `rem
 
 Se mantiene `schemaVersion: 1` porque los cambios son aditivos para los consumidores existentes:
 
+- Fase 2A: opción nueva `--preview` (dry-run explícito, excluyente con `--apply`/`--recover`) y campos nuevos `target` y `component` en `changes[]`. La huella no cambia.
 - Fase 0B: opción nueva `--expect-plan`, objeto nuevo `plan` en la respuesta de sync y código nuevo `stale-plan`. Además, `destination-changed` compara ahora los bytes originales (un cambio solo de saltos de línea entre plan y escritura también se rechaza).
 
 - Campos nuevos: `error.code` (sync/remove), `errorCode`, `home` y `targets` en errores de Doctor, `transaction` en sync, `home` en remove.
