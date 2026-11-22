@@ -11,6 +11,7 @@ concurrent local filesystem mutation; those limitations are documented.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -19,9 +20,11 @@ import re
 import shutil
 import stat
 import tempfile
+import time
 from datetime import datetime, timezone
 from secrets import token_hex
 
+from cli_contract import SyncodeError
 from path_safety import is_link_or_reparse
 
 WORK_DIR = ".ai-engineering-hub-transaction"
@@ -37,8 +40,45 @@ SKILL_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 AGENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
-class TransactionError(ValueError):
-    """Transaction was rejected or needs explicit recovery."""
+class TransactionError(SyncodeError):
+    """Transaction was rejected or needs explicit recovery.
+
+    Still a ValueError. The default contract code covers journal/snapshot
+    validation during rollback or recovery; other failures pass a code.
+    """
+
+    default_code = "recovery-blocked"
+
+
+# Outcome of the destination files for one transaction (see the CLI contract):
+#   not-started      no destination was modified by this attempt;
+#   rolled-back      destinations may have been written and were restored;
+#   committed        every destination was written and verified, and the
+#                    committed journal was recorded (the commit point);
+#   recovery-pending destinations may be partially applied; the journal is
+#                    preserved and `sync.py --recover` is required;
+#   unknown          (normally recovery only) the workspace held no journal and no
+#                    recovery data; nothing was restored and the earlier
+#                    result cannot be determined from the workspace.
+OUTCOMES = ("not-started", "rolled-back", "committed", "recovery-pending", "unknown")
+CLEANUP_RETRY_DELAY = 0.25
+# "rolled-back" is terminal: destinations were restored and only the workspace
+# cleanup remains (its snapshots may already be gone).
+JOURNAL_STATES = ("preparing", "pending", "committed", "rolled-back")
+
+
+def _describe(error: BaseException) -> str:
+    """Error detail safe for contract messages; hide unexpected exception text."""
+    if isinstance(error, (OSError, SyncodeError)):
+        return str(error)
+    return type(error).__name__
+
+
+@dataclass
+class TransactionReport:
+    """Mutable outcome holder, filled in even when an exception propagates."""
+
+    outcome: str = "not-started"
 
 
 def _sha(raw: bytes) -> str:
@@ -63,7 +103,10 @@ def exclusive_home_lock(home: Path, ensure_safe):
     try:
         ensure_safe(lock_path, home)
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise TransactionError("Installation lock is not a regular file")
+            raise TransactionError(
+                "Installation lock is not a regular file",
+                code="lock-unexpected",
+            )
         if os.name == "nt":
             import msvcrt
             os.lseek(fd, 0, os.SEEK_SET)
@@ -71,7 +114,8 @@ def exclusive_home_lock(home: Path, ensure_safe):
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             except OSError:
                 raise TransactionError(
-                    "Another installation/recovery is active; do not recover concurrently"
+                    "Another installation/recovery is active; do not recover concurrently",
+                    code="lock-busy",
                 ) from None
         else:
             import fcntl
@@ -79,7 +123,8 @@ def exclusive_home_lock(home: Path, ensure_safe):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 raise TransactionError(
-                    "Another installation/recovery is active; do not recover concurrently"
+                    "Another installation/recovery is active; do not recover concurrently",
+                    code="lock-busy",
                 ) from None
         acquired = True
         size = os.fstat(fd).st_size
@@ -90,7 +135,8 @@ def exclusive_home_lock(home: Path, ensure_safe):
             os.lseek(fd, 0, os.SEEK_SET)
             if os.read(fd, len(LOCK_MARKER) + 1) != LOCK_MARKER:
                 raise TransactionError(
-                    f"Unexpected existing installation lock contents: {lock_path}"
+                    f"Unexpected existing installation lock contents: {lock_path}",
+                    code="lock-unexpected",
                 )
         yield
     finally:
@@ -122,7 +168,7 @@ def _relative(path: Path, home: Path) -> str:
     try:
         relative = path.relative_to(home)
     except ValueError:
-        raise TransactionError("Transaction destination escapes home") from None
+        raise TransactionError("Transaction destination escapes home", code="unsafe-path") from None
     return relative.as_posix()
 
 
@@ -163,7 +209,7 @@ def _read_journal(directory: Path, home: Path, ensure_safe) -> dict:
         raise TransactionError("Invalid transaction journal") from None
     if not isinstance(data, dict) or set(data) != {"version", "state", "entries", "createdDirs"}:
         raise TransactionError("Invalid transaction journal fields")
-    if type(data["version"]) is not int or data["version"] != 1 or data["state"] not in ("preparing", "pending", "committed"):
+    if type(data["version"]) is not int or data["version"] != 1 or data["state"] not in JOURNAL_STATES:
         raise TransactionError("Invalid transaction state/version")
     if not isinstance(data["entries"], list) or len(data["entries"]) > MAX_FILES:
         raise TransactionError("Invalid transaction entry count")
@@ -210,8 +256,12 @@ def _read_journal(directory: Path, home: Path, ensure_safe) -> dict:
 def _save_journal(directory: Path, state: dict) -> None:
     raw = (json.dumps(state, sort_keys=True, indent=2) + "\n").encode("utf-8")
     if len(raw) > MAX_JOURNAL_BYTES:
-        raise TransactionError("Transaction journal size limit exceeded")
+        raise TransactionError("Transaction journal size limit exceeded", code="transaction-limit")
     temp = directory / (JOURNAL + ".tmp")
+    # A stale temp file can only come from an interrupted earlier save in this
+    # workspace (always written under the home lock); never follow a link.
+    if temp.exists() and not is_link_or_reparse(temp) and temp.is_file():
+        temp.unlink()
     with temp.open("xb") as handle:
         handle.write(raw)
         handle.flush()
@@ -222,7 +272,8 @@ def _save_journal(directory: Path, state: dict) -> None:
 
 def _snapshot(directory: Path, index: int, raw: bytes) -> str:
     if len(raw) > MAX_ORIGINAL_BYTES:
-        raise TransactionError("Existing file exceeds 16 MiB transaction snapshot limit")
+        raise TransactionError("Existing file exceeds 16 MiB transaction snapshot limit",
+                               code="transaction-limit")
     name = f"before-{index:04d}.bin"
     with (directory / name).open("xb") as handle:
         handle.write(raw)
@@ -250,11 +301,17 @@ def _backups(data: dict, directory: Path, home: Path, ensure_safe) -> None:
         backup = dest.with_name(item["backup"])
         ensure_safe(backup, home)
         if backup.exists():
-            raise TransactionError(f"Backup path already exists: {backup}")
+            raise TransactionError(
+                f"Backup path already exists: {backup}",
+                code="destination-conflict",
+            )
         snapshot = directory / item["snapshot"]
         original = snapshot.read_bytes()
         if _sha(original) != item["oldSha256"]:
-            raise TransactionError("Snapshot hash changed before final backup")
+            raise TransactionError(
+                "Snapshot hash changed before final backup",
+                code="integrity-mismatch",
+            )
         # Write a complete, separate copy in the workspace, then publish it
         # atomically with an EXCLUSIVE hardlink. An interruption cannot leave
         # a partially written final .bak file; the original snapshot stays
@@ -270,9 +327,53 @@ def _backups(data: dict, directory: Path, home: Path, ensure_safe) -> None:
 
 
 def _cleanup(directory: Path) -> None:
+    """Remove the workspace, deleting the journal LAST.
+
+    A partial failure therefore leaves either the journal (recover can redo
+    the cleanup) or an empty directory (recover removes it), never recovery
+    data without its journal.
+    """
     if is_link_or_reparse(directory) or not directory.is_dir():
-        raise TransactionError("Unsafe transaction workspace")
-    shutil.rmtree(directory)
+        raise TransactionError("Unsafe transaction workspace", code="unsafe-path")
+    for entry in directory.iterdir():
+        if entry.name == JOURNAL:
+            continue
+        if entry.is_dir() and not is_link_or_reparse(entry):
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+    journal = directory / JOURNAL
+    if journal.exists():
+        journal.unlink()
+    directory.rmdir()
+
+
+def _cleanup_with_retry(directory: Path) -> None:
+    """Retry once after a short pause (transient Windows scanner/indexer locks)."""
+    try:
+        _cleanup(directory)
+    except Exception:
+        time.sleep(CLEANUP_RETRY_DELAY)
+        _cleanup(directory)
+
+
+def _is_empty_workspace(directory: Path) -> bool:
+    """No journal and nothing but an unpublished journal temp file.
+
+    Such a workspace carries no recovery data: either the first journal was
+    never recorded (no destination written yet) or a cleanup removed the
+    journal last and stopped before rmdir. Removing it loses nothing.
+    """
+    if is_link_or_reparse(directory) or not directory.is_dir():
+        return False
+    entries = list(directory.iterdir())
+    if any(entry.name != JOURNAL + ".tmp" for entry in entries):
+        return False
+    return all(
+        not is_link_or_reparse(entry) and entry.is_file()
+        and entry.stat().st_size <= MAX_JOURNAL_BYTES
+        for entry in entries
+    )
 
 
 def _restore_bytes(destination: Path, raw: bytes, mode: int, home: Path, ensure_safe) -> None:
@@ -297,14 +398,53 @@ def _restore_bytes(destination: Path, raw: bytes, mode: int, home: Path, ensure_
             temp_name.unlink()
 
 
-def _rollback(directory: Path, home: Path, ensure_safe) -> None:
+_CLEANUP_FAILED_MESSAGES = {
+    "committed": "Changes were committed and verified, but",
+    "rolled-back": "Changes were rolled back, but",
+    "not-started": "No destination was modified, but",
+    "unknown": "No destination was modified by this recovery, but",
+}
+
+
+def _finish(directory: Path, outcome: str, report: TransactionReport) -> str:
+    """Record a terminal outcome first, then remove the workspace.
+
+    The outcome survives a cleanup failure (including a failed final rmdir
+    after the journal was deleted): the caller always learns whether the batch
+    was committed or rolled back, with an explicit ``cleanup-failed`` error.
+    """
+    report.outcome = outcome
+    try:
+        _cleanup_with_retry(directory)
+    except Exception as cleanup_error:
+        raise TransactionError(
+            f"{_CLEANUP_FAILED_MESSAGES[outcome]} the transaction workspace could not be "
+            f"removed ({_describe(cleanup_error)}). Do not re-apply; run "
+            "sync.py --recover to finish cleanup.",
+            code="cleanup-failed",
+        ) from cleanup_error
+    return outcome
+
+
+def _rollback(directory: Path, home: Path, ensure_safe,
+              report: TransactionReport | None = None) -> str:
+    """Finish or revert a journaled transaction; return its destination outcome.
+
+    ``report.outcome`` is updated as soon as the outcome is known, so it stays
+    accurate when cleanup (or anything after it) raises.
+    """
+    report = report if report is not None else TransactionReport()
+    ensure_safe(directory / JOURNAL, home)
+    if _is_empty_workspace(directory):
+        return _finish(directory, "unknown", report)
     data = _read_journal(directory, home, ensure_safe)
     if data["state"] == "committed":
-        _cleanup(directory)
-        return
+        # Already past the commit point: never revert, only finish cleanup.
+        return _finish(directory, "committed", report)
     if data["state"] == "preparing":
-        _cleanup(directory)
-        return
+        return _finish(directory, "not-started", report)
+    if data["state"] == "rolled-back":
+        return _finish(directory, "rolled-back", report)
 
     # Verify every destination/snapshot/backup before reverting ANY files.
     # Never overwrite user modifications or act on tampered journal paths.
@@ -366,54 +506,80 @@ def _rollback(directory: Path, home: Path, ensure_safe) -> None:
                 folder.rmdir()
             except OSError:
                 pass  # Leave a directory if unrelated user data appeared.
-    _cleanup(directory)
+    # Record the terminal state before deleting snapshots: if cleanup stops
+    # midway, --recover finishes it instead of failing on missing snapshots.
+    data["state"] = "rolled-back"
+    _save_journal(directory, data)
+    return _finish(directory, "rolled-back", report)
 
 
-def recover(home: Path, ensure_safe) -> bool:
-    """Explicit recovery; refuse concurrent installation and unknown modifications."""
+def recover(home: Path, ensure_safe, report: TransactionReport | None = None) -> str | None:
+    """Explicit recovery; refuse concurrent installation and unknown modifications.
+
+    Return None when there is nothing to recover, otherwise the outcome of the
+    recovered transaction ("rolled-back", "committed", "not-started" or
+    "unknown" for an empty, journal-less workspace). The
+    result keeps the truthiness of the former bool return value. When it
+    raises, ``report.outcome`` keeps any terminal outcome already reached.
+    """
     directory = home / WORK_DIR
     ensure_safe(directory / JOURNAL, home)
     if not directory.exists():
-        return False
+        return None
     with exclusive_home_lock(home, ensure_safe):
         # Recheck after acquiring the process-wide lock.
         ensure_safe(directory / JOURNAL, home)
         if not directory.exists():
-            return False
-        _rollback(directory, home, ensure_safe)
-    return True
+            return None
+        return _rollback(directory, home, ensure_safe, report)
 
 
-def apply_transaction(changes, home: Path, verify_change, write_change, ensure_safe) -> None:
-    """Exclusive, crash-recoverable application of an approved batch."""
+def apply_transaction(changes, home: Path, verify_change, write_change, ensure_safe,
+                      report: TransactionReport | None = None) -> None:
+    """Exclusive, crash-recoverable application of an approved batch.
+
+    ``report.outcome`` describes the destinations whether this returns or raises.
+    """
+    report = report if report is not None else TransactionReport()
+    report.outcome = "not-started"
     if not changes:
         return
     with exclusive_home_lock(home, ensure_safe):
-        _apply_transaction_locked(changes, home, verify_change, write_change, ensure_safe)
+        _apply_transaction_locked(changes, home, verify_change, write_change, ensure_safe, report)
 
 
-def _apply_transaction_locked(changes, home: Path, verify_change, write_change, ensure_safe):
+def _apply_transaction_locked(changes, home: Path, verify_change, write_change, ensure_safe,
+                              report: TransactionReport | None = None):
     """Stage preimages first; write, then commit or revert the entire batch."""
+    report = report if report is not None else TransactionReport()
     if not changes:
         return
     if len(changes) > MAX_FILES:
-        raise TransactionError(f"Refusing transaction of more than {MAX_FILES} files")
+        raise TransactionError(f"Refusing transaction of more than {MAX_FILES} files",
+                               code="transaction-limit")
     directory = home / WORK_DIR
     ensure_safe(directory, home)
     if directory.exists():
-        raise TransactionError("Unfinished transaction exists; run sync.py --recover")
+        raise TransactionError("Unfinished transaction exists; run sync.py --recover",
+                               code="transaction-pending")
 
     # Exclusive mkdir is the single-writer lock for this home.
     directory.mkdir(mode=0o700)
     journal = {"version": 1, "state": "preparing", "entries": [], "createdDirs": []}
+    # Phases: created -> preparing -> pending (destinations may change) -> committed.
+    phase = "created"
     try:
         _save_journal(directory, journal)
+        phase = "preparing"
         created = []
         for index, change in enumerate(changes):
             verify_change(change, home)
             rel = _relative(change.path, home)
             if not _allowed_relative(rel):
-                raise TransactionError(f"Unsupported managed destination: {rel}")
+                raise TransactionError(
+                    f"Unsupported managed destination: {rel}",
+                    code="unsafe-path",
+                )
             raw = change.path.read_bytes() if change.path.exists() else None
             new_bytes = change.content.encode("utf-8")
             before = _snapshot(directory, index, raw) if raw is not None else None
@@ -431,6 +597,7 @@ def _apply_transaction_locked(changes, home: Path, verify_change, write_change, 
         for change in changes:
             verify_change(change, home)
         journal["state"] = "pending"
+        phase = "pending"
         _save_journal(directory, journal)
         for change in changes:
             verify_change(change, home)
@@ -440,19 +607,65 @@ def _apply_transaction_locked(changes, home: Path, verify_change, write_change, 
             destination = home / Path(item["path"])
             ensure_safe(destination, home)
             if not destination.is_file() or _sha(destination.read_bytes()) != item["newSha256"]:
-                raise TransactionError(f"Post-write integrity mismatch: {destination}")
+                raise TransactionError(f"Post-write integrity mismatch: {destination}",
+                                       code="integrity-mismatch")
         _backups(journal, directory, home, ensure_safe)
         journal["state"] = "committed"
+        # The commit point is the atomic replacement inside _save_journal. A
+        # later failure in that call (e.g. a POSIX directory fsync) is handled
+        # below: _rollback re-reads the journal and never reverts a commit.
         _save_journal(directory, journal)
-        _cleanup(directory)
+        phase = "committed"
     except BaseException as original:
-        # An unsuccessful preparation cannot have touched target files.
+        if phase == "created":
+            # The first journal was never recorded and no destination was
+            # written. This process created the workspace exclusively under
+            # the lock, so remove it. If that fails, the workspace holds at
+            # most journal.json.tmp, which --recover removes safely.
+            try:
+                _cleanup(directory)
+            except Exception as cleanup_error:
+                if not isinstance(original, Exception):
+                    # Keep KeyboardInterrupt/SystemExit semantics (a bare
+                    # `raise` here would re-raise the cleanup error instead).
+                    raise original from cleanup_error
+                raise TransactionError(
+                    f"Install aborted before any write ({type(original).__name__}); "
+                    f"workspace cleanup failed ({_describe(cleanup_error)}). "
+                    "No destination was modified; run sync.py --recover to remove "
+                    "the empty transaction workspace.",
+                    code="cleanup-failed",
+                ) from original
+            raise
+        # Preparation cannot have touched target files; after "pending" the
+        # destinations may be partially written until rollback succeeds.
+        # _rollback re-reads the journal: if the committed journal was already
+        # recorded (e.g. a directory fsync failed after the atomic replace),
+        # it reports "committed" and never reverts.
+        report.outcome = "recovery-pending" if phase == "pending" else "not-started"
         try:
-            _rollback(directory, home, ensure_safe)
+            _rollback(directory, home, ensure_safe, report)
         except Exception as rollback_error:
+            if not isinstance(original, Exception):
+                # Defect fix: an interrupt must stay an interrupt (exit 130)
+                # even when rollback or its cleanup fails; report.outcome and
+                # the preserved journal carry the recovery state.
+                raise original from rollback_error
+            if getattr(rollback_error, "code", None) == "cleanup-failed":
+                # Terminal outcome already recorded; keep the original cause.
+                raise TransactionError(
+                    f"Install failed ({type(original).__name__}). {rollback_error}",
+                    code="cleanup-failed",
+                ) from original
             raise TransactionError(
                 f"Install interrupted ({type(original).__name__}); "
-                f"rollback incomplete ({rollback_error}). "
-                "Transaction preserved; run sync.py --recover after inspection."
+                f"rollback incomplete ({_describe(rollback_error)}). "
+                "Transaction preserved; run sync.py --recover after inspection.",
+                code="recovery-required",
             ) from original
         raise
+
+    # Past the commit point: destinations and backups are final. Never roll
+    # back. Retry the workspace removal once (transient Windows file locks);
+    # otherwise report the committed state with an explicit cleanup error.
+    _finish(directory, "committed", report)
