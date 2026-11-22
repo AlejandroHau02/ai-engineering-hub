@@ -227,10 +227,22 @@ mod tests {
     use crate::runner::testing::*;
     use serde_json::{json, Value};
 
+    /// Serialize like the core does (`ensure_ascii`): non-ASCII as \uXXXX.
     fn exited(code: i32, value: &Value) -> Exited {
+        let mut ascii = String::new();
+        for c in serde_json::to_string(value).unwrap().chars() {
+            if c.is_ascii() {
+                ascii.push(c);
+            } else {
+                let mut units = [0u16; 2];
+                for unit in c.encode_utf16(&mut units) {
+                    ascii.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
         Exited {
             code: Some(code),
-            stdout: serde_json::to_vec(value).unwrap(),
+            stdout: ascii.into_bytes(),
             overflow: false,
             stderr_len: 0,
         }
