@@ -23,6 +23,8 @@ python scripts/sync.py --target both
 python scripts/sync.py --target both --apply
 ```
 
+Si ya existe una carpeta de skill con ese nombre pero sin `SKILL.md`, aunque esté vacía, el instalador **rechaza** incorporarle contenido sin revisión manual para no mezclar archivos personales con una skill propia. También conserva su rechazo habitual a un `SKILL.md` personalizado o distinto.
+
 Para auditorías, solicita expresamente una revisión de seguridad de tu aplicación o PR. La skill prioriza hallazgos comprobables y consulta avisos/estándares vigentes cuando el asistente tenga acceso y autorización. **No ejecuta escáneres activos, no actualiza archivos automáticamente ni mantiene un proceso en segundo plano.** El contenido de las fuentes externas siempre requiere verificación humana antes de adoptar cambios permanentes.
 
 ## Actualizar skills previamente instaladas con v0.1
