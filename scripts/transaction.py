@@ -55,7 +55,8 @@ def exclusive_home_lock(home: Path, ensure_safe):
     """
     lock_path = home / LOCK_FILE
     ensure_safe(lock_path, home)
-    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    flags = (os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+             | getattr(os, "O_BINARY", 0))
     # This file deliberately persists, including after a clean installation.
     fd = os.open(lock_path, flags, 0o600)
     acquired = False
@@ -93,15 +94,17 @@ def exclusive_home_lock(home: Path, ensure_safe):
                 )
         yield
     finally:
-        if acquired:
-            if os.name == "nt":
-                import msvcrt
-                os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        try:
+            if acquired:
+                if os.name == "nt":
+                    import msvcrt
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def _flush_parent(directory: Path) -> None:
