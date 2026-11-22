@@ -105,6 +105,14 @@ def build_plan(
                     )
                 changes.append(Change(dest, new_content, "UPGRADE", existing_skill))
                 continue
+            if dest.parent.exists():
+                # An already-existing skill directory may contain personal
+                # assets or a different skill. Never blend Hub content into it
+                # merely because SKILL.md has not been created.
+                raise ValueError(
+                    f"First-party skill directory already exists: {dest.parent}; "
+                    "manual review required (no files were written)"
+                )
             changes.append(Change(dest, new_content, "CREATE"))
         if include_specialists:
             for relative, agent_content in files_for_target(target).items():
