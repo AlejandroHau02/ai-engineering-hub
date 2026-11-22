@@ -86,7 +86,7 @@ Si el proceso se interrumpe abruptamente, **no vuelvas a aplicar de inmediato**.
 python scripts/sync.py --recover
 ```
 
-Con `--home`, usa exactamente el mismo directorio que durante el intento anterior. El comando no requiere credenciales ni consulta GitHub; restaura únicamente archivos que siguen coincidiendo con el contenido previo/nuevo que consta en el journal. Si otro proceso alteró alguno, se bloquea y deja evidencia para revisión manual. No borres la carpeta temporal ni los respaldos sin inspección. Lee [recuperación de transacciones](TRANSACTION_RECOVERY.md).
+Con `--home`, usa exactamente el mismo directorio que durante el intento anterior. El comando no requiere credenciales ni consulta GitHub; restaura únicamente archivos que siguen coincidiendo con el contenido previo/nuevo que consta en el journal. Si existe una instalación o recuperación activa, un bloqueo del sistema operativo rechaza `--recover` en paralelo. El archivo oculto `~/.ai-engineering-hub.sync.lock` persiste deliberadamente y no debe borrarse. Si otro proceso alteró alguno, se bloquea y deja evidencia para revisión manual. No borres la carpeta temporal ni los respaldos sin inspección. Lee [recuperación de transacciones](TRANSACTION_RECOVERY.md).
 
 **Límite:** la aplicación no es atómica para todos los archivos al mismo tiempo; el journal necesita recuperación explícita tras interrupciones y las carreras TOCTOU no desaparecen completamente.
 
