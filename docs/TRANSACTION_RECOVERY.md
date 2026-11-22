@@ -37,7 +37,7 @@ Cuando la recuperación termina correctamente, muestra `RECOVERED`. Si no hay un
 
 ## Cuándo bloquea la recuperación
 
-El journal y las copias de preimagen se conservan en `~/.ai-engineering-hub-transaction/` mientras el lote está activo o pendiente de recuperación. El programa se niega a iniciar otro plan si detecta ese workspace.
+El journal y las copias de preimagen se conservan en `~/.ai-engineering-hub-transaction/` mientras el lote está activo o pendiente de recuperación. El programa se niega a iniciar otro plan si detecta ese workspace. Para evitar una recuperación mientras otro proceso sigue instalando, se utiliza además un bloqueo exclusivo entre procesos en `~/.ai-engineering-hub.sync.lock`, adquirido durante toda la aplicación o recuperación. El archivo de bloqueo **permanece después de terminar** porque eliminarlo permitiría que procesos distintos bloquearan inodos diferentes; no debes borrarlo manualmente. Si el proceso termina inesperadamente, el bloqueo del sistema operativo se libera automáticamente, pero el journal de transacción sigue disponible.
 
 La recuperación verifica hashes de snapshots, hashes de contenido anterior y nuevo, ubicaciones gestionadas, ausencia de rutas escapadas/symlinks/junctions y respaldos publicados. Si un archivo fue modificado por una acción externa y ya no coincide con el valor anterior ni con el nuevo previsto, **no lo sobrescribe**. Tampoco borra respaldos cuyo contenido haya sido alterado. En esas circunstancias deja el journal intacto: revisa el archivo, las preimágenes, los respaldos y las diferencias antes de proceder manualmente.
 
