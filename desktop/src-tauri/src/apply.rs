@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 
 pub const APPLY_TIMEOUT: Duration = Duration::from_secs(300);
 pub const PLAN_TTL: Duration = Duration::from_secs(10 * 60);
+/// Token entropy: 128 bits.
+const TOKEN_BYTES: usize = 16;
 
 /// A reviewed plan that may be applied once.
 #[derive(Debug, Clone)]
@@ -41,7 +43,8 @@ struct StoreState {
 }
 
 /// One slot; every change of state bumps the generation, so a preview that
-/// finishes after the options changed can never store its plan.
+/// finishes after the options changed can never store its plan. Tokens are
+/// independent of the generation: 128 random bits from the OS CSPRNG.
 #[derive(Default)]
 pub struct PlanStore {
     state: Mutex<StoreState>,
@@ -86,7 +89,8 @@ impl PlanStore {
         if state.generation != generation {
             return None; // options changed or another preview started meanwhile
         }
-        let token = format!("plan-{generation}");
+        // Fail closed: without OS randomness no plan becomes applicable.
+        let token = new_token()?;
         state.pending = Some(Pending {
             token: token.clone(),
             fingerprint,
@@ -106,7 +110,7 @@ impl PlanStore {
         let mut state = self.lock();
         state.generation += 1;
         let pending = state.pending.take().ok_or(Denied::NoPlan)?;
-        if pending.token != token {
+        if !same_token(&pending.token, token) {
             return Err(Denied::WrongToken);
         }
         if pending.issued.elapsed() > ttl {
@@ -114,6 +118,26 @@ impl PlanStore {
         }
         Ok(pending)
     }
+}
+
+/// `plan-` + 32 lowercase hex characters (128 bits from the OS CSPRNG).
+fn new_token() -> Option<String> {
+    let mut bytes = [0u8; TOKEN_BYTES];
+    getrandom::fill(&mut bytes).ok()?;
+    Some(format!(
+        "plan-{}",
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    ))
+}
+
+/// Constant-time comparison (the token is not secret from the webview, but
+/// this keeps the check independent of where the strings differ).
+fn same_token(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
 }
 
 /// Preview and, when the plan can be applied, issue a single-use token.
@@ -533,6 +557,78 @@ mod tests {
         }
     }
 
+    fn is_random_token(token: &str) -> bool {
+        token.len() == 5 + 2 * TOKEN_BYTES
+            && token.starts_with("plan-")
+            && token[5..]
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+
+    #[test]
+    fn tokens_are_128_bit_random_and_unrelated_to_the_generation() {
+        let store = PlanStore::default();
+        let changes = vec![change("CREATE", ".claude/CLAUDE.md")];
+        let o = opts(Target::Both, false, false);
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let generation = store.invalidate();
+            let token = store
+                .offer(generation, fp('a'), o, "C:\\h", &changes)
+                .unwrap();
+            assert!(is_random_token(&token), "{token}");
+            assert_ne!(token, format!("plan-{generation}"), "predictable token");
+            assert!(seen.insert(token), "duplicate token");
+        }
+        // The bits are not stuck: across 1000 tokens every hex position varies.
+        let tokens: Vec<&String> = seen.iter().collect();
+        for position in 5..5 + 2 * TOKEN_BYTES {
+            let first = tokens[0].as_bytes()[position];
+            assert!(
+                tokens.iter().any(|t| t.as_bytes()[position] != first),
+                "position {position} never changes"
+            );
+        }
+    }
+
+    #[test]
+    fn guessed_or_old_tokens_never_authorize() {
+        let store = PlanStore::default();
+        let changes = vec![change("CREATE", ".claude/CLAUDE.md")];
+        let o = opts(Target::Both, false, false);
+        let generation = store.invalidate();
+        let token = store
+            .offer(generation, fp('a'), o, "C:\\h", &changes)
+            .unwrap();
+        // The old predictable form, a near miss and an empty string fail, and
+        // each failure discards the plan.
+        for guess in [
+            format!("plan-{generation}"),
+            {
+                let mut near = token.clone();
+                let last = near.pop().unwrap();
+                near.push(if last == '0' { '1' } else { '0' });
+                near
+            },
+            String::new(),
+        ] {
+            let generation = store.invalidate();
+            let fresh = store
+                .offer(generation, fp('b'), o, "C:\\h", &changes)
+                .unwrap();
+            assert_eq!(
+                store.take(&guess, PLAN_TTL).unwrap_err(),
+                Denied::WrongToken
+            );
+            assert_eq!(store.take(&fresh, PLAN_TTL).unwrap_err(), Denied::NoPlan);
+        }
+        // The token issued before those invalidations is dead as well.
+        assert_eq!(store.take(&token, PLAN_TTL).unwrap_err(), Denied::NoPlan);
+        assert!(same_token("plan-ab", "plan-ab"));
+        assert!(!same_token("plan-ab", "plan-ac"));
+        assert!(!same_token("plan-ab", "plan-abc"));
+    }
+
     #[test]
     fn store_is_single_use_and_invalidated() {
         let store = PlanStore::default();
@@ -568,7 +664,9 @@ mod tests {
             .offer(generation, fp('d'), o, "C:\\h", &changes)
             .unwrap();
         assert_eq!(
-            store.take("plan-999", PLAN_TTL).unwrap_err(),
+            store
+                .take("plan-00000000000000000000000000000000", PLAN_TTL)
+                .unwrap_err(),
             Denied::WrongToken
         );
         assert_eq!(store.take(&token, PLAN_TTL).unwrap_err(), Denied::NoPlan);
