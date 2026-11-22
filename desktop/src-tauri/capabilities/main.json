@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Diagnóstico window: may only invoke run_doctor. No core plugins, shell, fs or network.",
+  "windows": ["main"],
+  "permissions": ["allow-run-doctor"]
+}
