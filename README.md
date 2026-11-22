@@ -6,7 +6,7 @@
 
 El repositorio y los marcadores de configuración mantienen por ahora sus identificadores técnicos `ai-engineering-hub` para conservar compatibilidad con las instalaciones actuales.
 
-Estado: **v0.3 en evolución**, con cinco skills propias y cuatro especialistas opcionales para cada cliente. Este repositorio es público y está separado de cualquier empleador.
+Estado: **v0.3 en validación final**, con cinco skills propias y cuatro especialistas opcionales para cada cliente. Hay evidencia E2E local en Windows; quedan una comparación controlada sin Hub y la decisión de cierre/etiquetado. Este repositorio es público y está separado de cualquier empleador.
 
 ## Objetivo
 
@@ -22,7 +22,7 @@ Usar agentes de programación que inspeccionen el contexto, cuestionen decisione
 - [SYNCODE Doctor](scripts/doctor.py): diagnóstico local de instrucciones, skills, especialistas, herramientas disponibles y recuperación pendiente; sin ejecutar agentes ni alterar archivos.
 - [Pruebas](tests/test_sync.py) y CI para validar instalación segura.
 - [Evaluaciones](evals/README.md) de criterio, UX/UI, implementación y revisión cruzada; [rúbrica](evals/RUBRIC.md) y [calculadora local](scripts/score_evals.py).
-- [Registro de skills](registry/README.md): baselines v0.1 para upgrades verificados; diseño de futura revisión de capacidades externas (sin instalaciones automáticas).
+- [Registro de skills](registry/README.md): baselines v0.1 para upgrades verificados, fichas de revisión y aprobaciones manuales de capacidades externas (sin instalaciones automáticas).
 
 ## Inicio rápido
 
@@ -89,7 +89,7 @@ python scripts/skill_scout.py locate --repo "owner/repo" --limit 20
 python scripts/skill_scout.py inspect --url "https://github.com/owner/repo/blob/<commit-sha-40-caracteres>/skills/example/SKILL.md" --related
 ```
 
-Devuelve JSON con procedencia, hashes y señales de riesgo. **Todos los resultados requieren revisión humana.** La búsqueda inicial no verifica skills individuales; `locate` confirma rutas existentes y `inspect --related` examina una selección limitada de archivos del mismo directorio. El escaneo no certifica seguridad y la compatibilidad con Claude/Codex queda pendiente de pruebas. No existe promoción automática al instalador. Consulta [la guía](docs/SKILL_SCOUT.md) y [ADR-0003](docs/ADR-0003.md).
+Devuelve JSON con procedencia, hashes y señales de riesgo. **Todos los resultados requieren revisión humana.** La búsqueda inicial no verifica skills individuales; `locate` confirma rutas existentes y `inspect --related` examina una selección limitada de archivos del mismo directorio. El escaneo no certifica seguridad y la compatibilidad con Claude/Codex queda pendiente de pruebas. No existe **aprobación ni promoción automática**: el instalador opcional `sync.py --approved-skills` admite únicamente fuentes fijadas y aprobadas manualmente de un solo `SKILL.md`. Consulta [la guía](docs/SKILL_SCOUT.md) y [ADR-0003](docs/ADR-0003.md).
 
 ## Registro de revisiones y aprobaciones (v0.3)
 
@@ -115,6 +115,12 @@ python scripts/sync.py --target both --approved-skills --apply
 
 Primero se comprueba el estado declarado de licencia/aprobación en el manifiesto (que debe haber sido revisado manualmente), compatibilidad de cada cliente, el SHA del commit, blob y SHA-256 de la fuente. Este incremento **solo soporta skills autónomas de un único `SKILL.md`**; se rechazan dependencias dentro de su directorio. Consulta [la guía](docs/APPROVED_INSTALL.md), [la recuperación de instalaciones](docs/TRANSACTION_RECOVERY.md) y [ADR-0005](docs/ADR-0005.md).
 
+## Evidencia de validación local v0.3
+
+En Windows se ejecutaron 156 pruebas unitarias (`OK`, 7 omitidas), sincronización global e instalación aislada de los 20 componentes en ambos clientes, Doctor/JSON, delegación explícita de `hub-backend-auditor` en Claude y Codex y pruebas E05/E08. Una skill externa fijada por commit (`verification-before-completion`) se inspeccionó, verificó por SHA-256, reconoció en ambos clientes y se instaló/retiró mediante el gestor **solo en home temporal**, conservando respaldos. El manifiesto oficial sigue vacío: cero skills externas aprobadas globalmente.
+
+Esto no demuestra aún ganancia causal de calidad frente a los modelos sin Syncode ni equivale a una certificación de seguridad. Evidencia, límites y pendientes: [criterios de cierre v0.3](docs/SYNCODE_V03_EXIT.md) y [expediente QA externo #14](https://github.com/AlejandroHau02/ai-engineering-hub/issues/14).
+
 ## Diagnóstico y salida estructurada (preparación Desktop)
 
 ```powershell
@@ -129,7 +135,7 @@ El Doctor no ejecuta los clientes ni descarga información; muestra estado de in
 
 - **v0.1:** núcleo reutilizable, skills propias, instalación segura y pruebas.
 - **v0.2:** upgrades verificados, controles de calidad y capa opcional de especialistas nativos.
-- **v0.3 (en desarrollo):** inspección, aprobación e instalación controlada de skills externas autónomas y quinta skill propia de auditoría AppSec; bundles y fuentes adicionales siguen pendientes.
+- **v0.3 (en validación final):** inspección, aprobación e instalación controlada de skills externas autónomas y quinta skill propia de auditoría AppSec; bundles y fuentes adicionales siguen pendientes.
 
 Consulta [ADR-0001](docs/ADR-0001.md) para las decisiones de arquitectura.
 
