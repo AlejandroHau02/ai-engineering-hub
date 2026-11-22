@@ -91,7 +91,7 @@ python scripts/skill_scout.py inspect --url "https://github.com/owner/repo/blob/
 
 Devuelve JSON con procedencia, hashes y señales de riesgo. **Todos los resultados requieren revisión humana.** La búsqueda inicial no verifica skills individuales; `locate` confirma rutas existentes y `inspect --related` examina una selección limitada de archivos del mismo directorio. El escaneo no certifica seguridad y la compatibilidad con Claude/Codex queda pendiente de pruebas. No existe promoción automática al instalador. Consulta [la guía](docs/SKILL_SCOUT.md) y [ADR-0003](docs/ADR-0003.md).
 
-## Registro de revisiones y aprobaciones (propuesto para v0.3)
+## Registro de revisiones y aprobaciones (v0.3)
 
 La revisión y la aprobación humana son etapas independientes del descubrimiento. El manifiesto `registry/approved-skills.json` inicia vacío, y el gestor asociado solo imprime resultados:
 
@@ -123,7 +123,7 @@ python scripts/doctor.py --target both --format json
 python scripts/sync.py --target both --format json
 ```
 
-El Doctor no ejecuta los clientes ni descarga información; muestra estado de instalación y conflictos. `sync.py --format json` describe operaciones y resultados sin cambiar el modo de texto ni el requisito explícito de `--apply`. El formato es un contrato de datos para una futura aplicación local, **no** un servidor ni una interfaz HTTP.
+El Doctor no ejecuta los clientes ni descarga información; muestra estado de instalación y conflictos. `sync.py --format json` describe operaciones y resultados sin cambiar el modo de texto ni el requisito explícito de `--apply`. El formato es un contrato de datos para una futura aplicación local, **no** un servidor ni una interfaz HTTP. Consulta [contratos CLI](docs/SYNCODE_CLI_CONTRACT.md) y [criterios para cerrar v0.3](docs/SYNCODE_V03_EXIT.md).
 
 ## Roadmap
 
