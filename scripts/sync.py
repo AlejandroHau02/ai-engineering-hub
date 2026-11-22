@@ -22,7 +22,7 @@ from transaction import TransactionError, WORK_DIR, apply_transaction, recover
 ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
 END = "<!-- ai-engineering-hub:end -->"
-SKILLS = ("architecture-review", "ux-ui", "backend-engineering", "code-review")
+SKILLS = ("architecture-review", "ux-ui", "backend-engineering", "code-review", "application-security-audit")
 BASELINES = ROOT / "registry" / "baselines" / "v0.1"
 
 
