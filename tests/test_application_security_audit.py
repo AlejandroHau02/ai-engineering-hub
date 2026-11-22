@@ -62,9 +62,11 @@ class AppSecSkillTests(unittest.TestCase):
         result = self.run_sync("--target", "both")
         self.assertEqual(result.returncode, 0, result.stderr)
         for root in (".claude", ".agents"):
+            # Windows may spell the same temp home using its 8.3 alias
+            # in pathlib but a long name in the subprocess.
             self.assertIn(
-                str(self.home / root / "skills" / SKILL_ID / "SKILL.md"),
-                result.stdout,
+                str(Path(root) / "skills" / SKILL_ID / "SKILL.md").casefold(),
+                result.stdout.casefold(),
             )
         self.assertEqual(list(self.home.iterdir()), [])
 
