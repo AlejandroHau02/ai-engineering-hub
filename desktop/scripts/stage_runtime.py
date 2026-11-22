@@ -181,12 +181,33 @@ def stage(dest: Path, archive: Path | None, allow_dirty: bool = False,
             download(ARCHIVE_URL, archive)
         stage_python(archive, work / "python")
         manifest = stage_core(work / "syncode", repo, source)
-        for name in ("python", "syncode"):
-            final = dest / name
-            if final.exists():
-                shutil.rmtree(final)
-            (work / name).replace(final)
+        _swap_in(work, dest, ("python", "syncode"))
     return manifest
+
+
+def _swap_in(work: Path, dest: Path, names: tuple[str, ...]) -> None:
+    """Move the new trees into place; restore the previous ones on failure.
+
+    Existing trees are first renamed aside (inside ``work``, removed with it),
+    so a locked or failing rename never leaves a mixed old/new runtime.
+    """
+    old = work / ".previous"
+    old.mkdir()
+    moved_aside, installed = [], []
+    try:
+        for name in names:
+            if (dest / name).exists():
+                (dest / name).replace(old / name)
+                moved_aside.append(name)
+        for name in names:
+            (work / name).replace(dest / name)
+            installed.append(name)
+    except OSError:
+        for name in installed:
+            (dest / name).replace(work / name)
+        for name in moved_aside:
+            (old / name).replace(dest / name)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -143,6 +143,41 @@ class StageCoreTests(unittest.TestCase):
                 self.assertEqual(list(Path(tmp).iterdir()), [])
 
 
+class SwapInTests(unittest.TestCase):
+    def test_failed_swap_restores_previous_trees(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest, work = base / "dest", base / "work"
+            for root, label in ((dest, "old"), (work, "new")):
+                for name in ("python", "syncode"):
+                    (root / name).mkdir(parents=True)
+                    (root / name / "marker").write_text(label, encoding="utf-8")
+            real_replace = Path.replace
+
+            def flaky(self, target):
+                if self.parent == work and self.name == "syncode":
+                    raise PermissionError("locked")
+                return real_replace(self, target)
+
+            with mock.patch.object(Path, "replace", flaky):
+                with self.assertRaises(PermissionError):
+                    stage_runtime._swap_in(work, dest, ("python", "syncode"))
+            for name in ("python", "syncode"):
+                self.assertEqual((dest / name / "marker").read_text(encoding="utf-8"), "old")
+
+    def test_swap_replaces_both_trees(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest, work = base / "dest", base / "work"
+            (dest / "python").mkdir(parents=True)
+            for name in ("python", "syncode"):
+                (work / name).mkdir(parents=True)
+                (work / name / "marker").write_text("new", encoding="utf-8")
+            stage_runtime._swap_in(work, dest, ("python", "syncode"))
+            for name in ("python", "syncode"):
+                self.assertEqual((dest / name / "marker").read_text(encoding="utf-8"), "new")
+
+
 STAGED = REPO / "desktop" / "src-tauri" / "resources"
 
 

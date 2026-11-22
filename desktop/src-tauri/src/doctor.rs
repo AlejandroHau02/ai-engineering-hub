@@ -92,6 +92,32 @@ impl DoctorOutcome {
     }
 }
 
+const MAX_MANIFEST: u64 = 256 * 1024;
+
+/// Relative paths declared in `BUNDLE_MANIFEST.json`'s `files` map. `None`
+/// when the manifest is unreadable, oversized, malformed or declares a path
+/// that is not a plain relative path (no `..`, drive, root or backslash).
+fn manifest_files(manifest: &Path) -> Option<Vec<String>> {
+    if std::fs::metadata(manifest).ok()?.len() > MAX_MANIFEST {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&std::fs::read(manifest).ok()?).ok()?;
+    let files = value.get("files")?.as_object()?;
+    let safe = |rel: &str| {
+        !rel.is_empty()
+            && rel
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..")
+            && rel
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c))
+    };
+    if files.is_empty() || !files.keys().all(|k| safe(k)) {
+        return None;
+    }
+    Some(files.keys().cloned().collect())
+}
+
 /// Locations of the bundled runtime, derived only from the resource dir.
 #[derive(Debug, Clone)]
 pub struct Runtime {
@@ -105,13 +131,29 @@ impl Runtime {
     pub fn from_resource_dir(dir: &Path) -> Self {
         let python = dir.join("python").join("python.exe");
         let script = dir.join("syncode").join("scripts").join("doctor.py");
-        let required = vec![
+        let manifest = dir.join("syncode").join("BUNDLE_MANIFEST.json");
+        let mut required = vec![
             python.clone(),
             dir.join("python").join("python312._pth"),
             dir.join("python").join("python312.dll"),
+            dir.join("python").join("python312.zip"),
             script.clone(),
-            dir.join("syncode").join("BUNDLE_MANIFEST.json"),
+            manifest.clone(),
         ];
+        // Every core file the bundle declares must exist, so a partial
+        // install is reported as incomplete rather than as "no output".
+        // This is an existence check only; hashes stay audit evidence.
+        match manifest_files(&manifest) {
+            Some(files) => required.extend(files.iter().map(|rel| {
+                rel.split('/')
+                    .fold(dir.join("syncode"), |p, part| p.join(part))
+            })),
+            // Present but unreadable/invalid: report it as an incomplete bundle.
+            None if manifest.exists() => {
+                required.push(dir.join("syncode").join("BUNDLE_MANIFEST.json (invalid)"))
+            }
+            None => {}
+        }
         Runtime {
             python,
             script,
@@ -660,6 +702,71 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("syncode-missing-{}", std::process::id()));
         let outcome = run(&Runtime::from_resource_dir(&dir), &[], DOCTOR_TIMEOUT);
         assert_eq!(transport_code(outcome), TransportCode::BundleIncomplete);
+    }
+
+    fn write_manifest(dir: &Path, body: &str) -> PathBuf {
+        let path = dir.join("BUNDLE_MANIFEST.json");
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn manifest_files_accepts_only_plain_relative_paths() {
+        let dir = std::env::temp_dir().join(format!("syncode-manifest-{}", std::process::id()));
+        let ok = write_manifest(
+            &dir,
+            r#"{"files": {"scripts/sync.py": "x", "skills/ux-ui/SKILL.md": "y"}}"#,
+        );
+        assert_eq!(manifest_files(&ok).unwrap().len(), 2);
+        for bad in [
+            r#"{"files": {"../evil.py": "x"}}"#,
+            r#"{"files": {"/abs.py": "x"}}"#,
+            r#"{"files": {"C:/x.py": "x"}}"#,
+            r#"{"files": {"a\\b.py": "x"}}"#,
+            r#"{"files": {"a//b.py": "x"}}"#,
+            r#"{"files": {}}"#,
+            r#"{"nofiles": 1}"#,
+            "not json",
+        ] {
+            let path = write_manifest(&dir, bad);
+            assert!(manifest_files(&path).is_none(), "{bad}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn partial_bundle_is_incomplete_before_spawning() {
+        let Some(runtime) = staged() else { return };
+        let copy = scratch("partial");
+        for tree in ["python", "syncode"] {
+            copy_tree(&runtime.workdir.join(tree), &copy.join(tree));
+        }
+        std::fs::remove_file(copy.join("syncode").join("scripts").join("sync.py")).unwrap();
+        let outcome = run(&Runtime::from_resource_dir(&copy), &[], DOCTOR_TIMEOUT);
+        match outcome {
+            DoctorOutcome::Transport {
+                code: TransportCode::BundleIncomplete,
+                detail,
+                ..
+            } => {
+                assert!(detail.contains("sync.py"), "{detail}")
+            }
+            other => panic!("unexpected outcome {other:?}"),
+        }
+    }
+
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
     }
 
     // ---- Integration tests against the staged embedded runtime ----------

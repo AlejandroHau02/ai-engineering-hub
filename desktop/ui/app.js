@@ -65,7 +65,10 @@
       "El puente con SYNCODE Desktop no está disponible en esta ventana."],
   };
 
-  const state = { runId: 0, running: false, lastGood: null, current: null, userHome: null };
+  // `homes`: spellings of the user's home seen so far (USERPROFILE from the
+  // shell and Doctor's resolved home), all shortened to "~" for privacy.
+  const state = { runId: 0, running: false, lastGood: null, current: null, homes: new Set() };
+  const rawPath = new WeakMap();
 
   // ---- small DOM helpers ---------------------------------------------------
   function el(tag, attrs, ...children) {
@@ -124,19 +127,38 @@
   function showFull() { return $("show-paths").checked; }
   function shorten(text) {
     if (typeof text !== "string" || showFull()) return text;
-    const home = state.userHome;
-    if (!home) return text;
-    const lower = text.toLowerCase();
-    const needle = home.toLowerCase();
-    let out = "";
-    let index = 0;
-    for (;;) {
-      const at = lower.indexOf(needle, index);
-      if (at < 0) break;
-      out += text.slice(index, at) + "~";
-      index = at + home.length;
+    // Longest first, so a short spelling never pre-empts a longer resolved home.
+    const homes = [...state.homes].filter(Boolean).sort((a, b) => b.length - a.length);
+    let out = text;
+    for (const home of homes) {
+      const needle = home.toLowerCase();
+      const lower = out.toLowerCase();
+      let result = "";
+      let index = 0;
+      for (;;) {
+        const at = lower.indexOf(needle, index);
+        if (at < 0) break;
+        result += out.slice(index, at) + "~";
+        index = at + home.length;
+      }
+      out = result + out.slice(index);
     }
-    return out + text.slice(index);
+    return out;
+  }
+
+  // A text node that may contain local paths; re-shortened in place when the
+  // "Mostrar rutas completas" toggle changes (no repaint, no re-announcement).
+  function pathText(tag, attrs, raw) {
+    const node = el(tag, Object.assign({ "data-path": true }, attrs || {}));
+    rawPath.set(node, raw);
+    node.textContent = shorten(raw);
+    return node;
+  }
+
+  function refreshPaths() {
+    for (const node of document.querySelectorAll("[data-path]")) {
+      if (rawPath.has(node)) node.textContent = shorten(rawPath.get(node));
+    }
   }
 
   // ---- derive what needs review from a validated report --------------------
@@ -236,7 +258,7 @@
     }
     frag.append(cards);
     frag.append(el("p", { class: "note" },
-      "Home analizado: ", el("span", { class: "path", text: shorten(report.home) }),
+      "Home analizado: ", pathText("span", { class: "path" }, report.home),
       ` · Instantánea de ${formatTime(at)}; los cambios posteriores no se reflejan. La detección de CLI no verifica versiones.`));
     return frag;
   }
@@ -262,7 +284,7 @@
   function rowNode(row) {
     return el("li", { class: "row", id: row.id, tabindex: "-1" },
       el("span", { class: "name" }, row.name,
-        row.hint ? el("span", { class: "hint path", text: shorten(row.hint) }) : null),
+        row.hint ? pathText("span", { class: "hint path" }, row.hint) : null),
       statusChip(row.info));
   }
 
@@ -294,7 +316,7 @@
       const interrupted = outcome.exitCode === 130;
       origin = interrupted ? "Diagnóstico interrumpido" : "Doctor informó un error";
       title = "No se pudo completar el diagnóstico";
-      body = interrupted ? "Doctor se interrumpió antes de terminar." : shorten(outcome.message) || "Doctor no pudo completar la inspección.";
+      body = interrupted ? "Doctor se interrumpió antes de terminar." : outcome.message || "Doctor no pudo completar la inspección.";
       rows.push(["Código", outcome.errorCode], ["Salida", outcome.exitCode]);
     } else {
       const code = outcome.kind === "transport" ? outcome.code : "contractMismatch";
@@ -304,7 +326,7 @@
       body = text;
       rows.push(["Código", code]);
       if (outcome.exitCode !== null && outcome.exitCode !== undefined) rows.push(["Salida del proceso", outcome.exitCode]);
-      if (outcome.detail) rows.push(["Detalle", shorten(outcome.detail)]);
+      if (outcome.detail) rows.push(["Detalle", outcome.detail]);
     }
     rows.push(["Hora", formatTime(at)]);
     const retry = el("button", { type: "button", class: "primary", text: "Reintentar" });
@@ -315,10 +337,10 @@
       el("div", {},
         el("p", { class: "origin", text: origin }),
         el("h2", { id: "fail-title", text: title }),
-        el("p", { text: body }),
+        pathText("p", {}, body),
         el("p", { class: "note", text: "Esto no es un resultado del diagnóstico: no se evaluó el estado de la instalación." }),
         el("details", {}, el("summary", { text: "Detalle técnico" }),
-          el("dl", {}, rows.map(([k, v]) => [el("dt", { text: k }), el("dd", { text: String(v) })]))),
+          el("dl", {}, rows.map(([k, v]) => [el("dt", { text: k }), pathText("dd", {}, String(v))]))),
         el("div", { class: "actions" }, retry))));
     if (state.lastGood) {
       const stale = el("details", { class: "stale" },
@@ -335,7 +357,7 @@
 
   function paint() {
     const target = $("result");
-    if (!state.current) return;
+    if (!state.current || state.running) return;
     const { run, at } = state.current;
     target.replaceChildren(run.outcome.kind === "report" ? renderReport(run, at) : renderFailure(run, at));
     target.setAttribute("aria-busy", "false");
@@ -378,12 +400,15 @@
     } catch (error) {
       run = { outcome: { kind: "transport", code: "bridge", detail: String(error && error.message || error), exitCode: null } };
     }
+    state.running = false;
     if (id !== state.runId) return; // a newer run superseded this one
     const at = new Date();
-    if (run.userHome) state.userHome = run.userHome;
+    if (typeof run.userHome === "string") state.homes.add(run.userHome);
+    if (run.outcome.kind === "report" && typeof run.outcome.report.home === "string") {
+      state.homes.add(run.outcome.report.home);
+    }
     state.current = { run, at };
     if (run.outcome.kind === "report") state.lastGood = { run, at };
-    state.running = false;
     button.removeAttribute("aria-disabled");
     paint();
     const seconds = typeof run.durationMs === "number" ? ` en ${(run.durationMs / 1000).toFixed(1)} s` : "";
@@ -395,7 +420,7 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     $("run").addEventListener("click", () => runDiagnosis($("run")));
-    $("show-paths").addEventListener("change", paint);
+    $("show-paths").addEventListener("change", refreshPaths);
     document.addEventListener("keydown", (event) => {
       // F5 / Ctrl+R re-run the diagnosis instead of reloading the webview.
       if (event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r")) {

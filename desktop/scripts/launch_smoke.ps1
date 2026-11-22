@@ -6,17 +6,23 @@
   Evidence helper for local runs and CI. With -Isolated the app is started from
   a hostile working directory with PYTHONPATH/PYTHONHOME pointing at shadowing
   modules and a PATH without any Python, to show the bundled runtime does not
-  depend on a global interpreter. Writes a PNG and prints a JSON summary.
+  depend on a global interpreter. With -ExpectText the rendered page is read
+  through UI Automation, so a window that opens but shows a transport failure
+  instead of a diagnosis fails the check. Writes a PNG and a JSON summary.
 #>
 param(
   [Parameter(Mandatory)] [string] $Exe,
   [Parameter(Mandatory)] [string] $Out,
   [int] $WaitSeconds = 8,
-  [switch] $Isolated
+  [switch] $Isolated,
+  # Fails unless a rendered element's accessible name contains this text
+  # (read through UI Automation from the WebView2 accessibility tree).
+  [string] $ExpectText
 )
 $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -73,20 +79,38 @@ New-Item -ItemType Directory -Force (Split-Path $outPath) | Out-Null
 $bitmap.Save($outPath, [System.Drawing.Imaging.ImageFormat]::Png)
 $graphics.Dispose(); $bitmap.Dispose()
 
+$found = $null
+if ($ExpectText) {
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+  $until = (Get-Date).AddSeconds(15)
+  while (-not $found -and (Get-Date) -lt $until) {
+    $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+      [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($node in $all) {
+      $name = $node.Current.Name
+      if ($name -and $name.Contains($ExpectText)) { $found = $name; break }
+    }
+    if (-not $found) { Start-Sleep -Milliseconds 500 }
+  }
+}
+
 $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.Id)" | Select-Object -ExpandProperty ExecutablePath)
 [void]$proc.CloseMainWindow()
 if (-not $proc.WaitForExit(5000)) { Stop-Process -Id $proc.Id -Force }
 $poisoned = Test-Path $marker
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 
+$expectOk = (-not $ExpectText) -or [bool]$found
 [ordered]@{
-  ok = -not $poisoned
+  ok = (-not $poisoned) -and $expectOk
   exe = $exePath
   windowTitle = $title
   isolated = [bool]$Isolated
   poisonImported = $poisoned
+  expectText = $ExpectText
+  foundText = $found
   screenshot = $outPath
   size = "${width}x${height}"
   childProcessesAtCapture = $children
 } | ConvertTo-Json
-if ($poisoned) { exit 1 }
+if ($poisoned -or -not $expectOk) { exit 1 }

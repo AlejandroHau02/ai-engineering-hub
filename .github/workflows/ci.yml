@@ -29,6 +29,8 @@ jobs:
     name: Desktop (Windows, Tauri + embedded Python)
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      TAURI_CLI_VERSION: "2.12.6"
     defaults:
       run:
         shell: pwsh
@@ -46,7 +48,7 @@ jobs:
             ~/.cargo/git
             ~/.cargo/bin/cargo-tauri.exe
             desktop/src-tauri/target
-          key: desktop-${{ runner.os }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          key: desktop-${{ runner.os }}-cli${{ env.TAURI_CLI_VERSION }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
       - name: Stage embedded runtime (pinned SHA-256)
         run: python desktop/scripts/stage_runtime.py
       - name: Runtime isolation smoke and staging tests
@@ -57,7 +59,9 @@ jobs:
         working-directory: desktop/src-tauri
         run: cargo test --locked
       - name: Tauri CLI
-        run: if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) { cargo install tauri-cli --version "=2.12.6" --locked }
+        run: |
+          $have = if (Get-Command cargo-tauri -ErrorAction SilentlyContinue) { (cargo tauri --version) -replace '^tauri-cli ', '' }
+          if ($have -ne $env:TAURI_CLI_VERSION) { cargo install tauri-cli --version "=$env:TAURI_CLI_VERSION" --locked --force }
       - name: Build NSIS installer
         working-directory: desktop/src-tauri
         run: cargo tauri build --ci
@@ -68,8 +72,8 @@ jobs:
           Start-Process $setup.FullName -ArgumentList '/S', "/D=$dest" -Wait
           $exe = Get-ChildItem $dest -Filter *.exe | Where-Object Name -notlike 'uninstall*' | Select-Object -First 1
           if (-not (Test-Path "$dest/python/python.exe") -or -not (Test-Path "$dest/syncode/scripts/doctor.py")) { throw 'bundled runtime missing' }
-          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$env:RUNNER_TEMP/evidence/diagnostico.png"
-          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$env:RUNNER_TEMP/evidence/diagnostico-isolated.png" -Isolated
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$env:RUNNER_TEMP/evidence/diagnostico.png" -ExpectText 'Diagnóstico completado'
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$env:RUNNER_TEMP/evidence/diagnostico-isolated.png" -Isolated -ExpectText 'Diagnóstico completado'
           Copy-Item $setup.FullName "$env:RUNNER_TEMP/evidence/"
       - uses: actions/upload-artifact@v4
         with:
