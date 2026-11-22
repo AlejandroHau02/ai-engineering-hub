@@ -73,6 +73,40 @@ class TransactionTests(unittest.TestCase):
         dest.write_bytes(updated)
         return dest
 
+    def test_active_apply_blocks_second_concurrent_apply(self):
+        changes = sync.build_plan(self.home, ("claude",))
+        with transaction.exclusive_home_lock(self.home, sync.ensure_safe):
+            with self.assertRaisesRegex(transaction.TransactionError, "active"):
+                transaction.apply_transaction(
+                    changes, self.home, sync.verify_change, sync.write_with_backup,
+                    sync.ensure_safe,
+                )
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertFalse(self.workspace().exists())
+        self.assertEqual((self.home / transaction.LOCK_FILE).read_bytes(),
+                         transaction.LOCK_MARKER)
+
+    def test_active_apply_blocks_concurrent_recovery_without_touching_journal(self):
+        config = self.setup_interrupted()
+        with transaction.exclusive_home_lock(self.home, sync.ensure_safe):
+            self.assertEqual(sync.main(["--recover", "--home", str(self.home)]), 1)
+            self.assertEqual(config.read_bytes(), b"updated\n")
+            self.assertTrue(self.workspace().exists())
+        self.assertEqual(sync.main(["--recover", "--home", str(self.home)]), 0)
+        self.assertEqual(config.read_bytes(), b"original\n")
+
+    def test_existing_unrecognized_lock_file_blocks_writes(self):
+        lock_path = self.home / transaction.LOCK_FILE
+        lock_path.write_bytes(b"user-defined lock data")
+        changes = sync.build_plan(self.home, ("claude",))
+        with self.assertRaisesRegex(transaction.TransactionError, "Unexpected existing"):
+            transaction.apply_transaction(
+                changes, self.home, sync.verify_change, sync.write_with_backup,
+                sync.ensure_safe,
+            )
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertEqual(lock_path.read_bytes(), b"user-defined lock data")
+
     def test_failure_after_first_file_restores_all_originals(self):
         original = b"Preserve my personal instructions\n"
         config = self.write_existing(original)
