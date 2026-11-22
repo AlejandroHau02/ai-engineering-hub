@@ -32,7 +32,7 @@ pub enum DoctorOutcome {
 }
 
 pub fn run(runtime: &Runtime, env: &[(String, OsString)], timeout: Duration) -> DoctorOutcome {
-    match runner::execute(runtime, Script::Doctor, &DOCTOR_ARGS, env, timeout) {
+    match runner::execute(runtime, Script::Doctor, &DOCTOR_ARGS, None, env, timeout) {
         Ok(exited) => match classify(&exited) {
             DoctorOutcome::Transport(failure) => DoctorOutcome::Transport(exited.annotate(failure)),
             other => other,

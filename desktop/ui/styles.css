@@ -246,3 +246,34 @@ p.notice-panel { display: block; }
   button.primary { border: 2px solid ButtonText; }
   :focus-visible { outline-color: Highlight; }
 }
+
+/* Apply (Phase 2B) */
+.apply-area { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 16px; }
+.apply-area .note { margin: 0; max-width: 70ch; }
+button.secondary { background: var(--surface); border-color: var(--border); color: var(--text); }
+#apply-dialog {
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 0;
+  background: var(--surface); color: var(--text); width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 2rem);
+}
+#apply-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+.dialog-body { display: flex; flex-direction: column; max-height: calc(100vh - 2rem); }
+.dialog-body h2 { padding: 20px 22px 0; }
+.dialog-body > p, .dialog-body > ul { margin: 10px 22px 0; }
+.dialog-body .counts { padding-left: 18px; }
+.dialog-body .warnings { overflow-y: auto; padding-left: 18px; color: var(--muted); }
+.dialog-body .warnings li { margin: 4px 0; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 22px 20px; margin-top: 8px; border-top: 1px solid var(--border); }
+.recovery { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.recovery-title { margin: 0 0 4px; font-weight: 600; }
+.recovery ol { margin: 0; padding-left: 20px; }
+.recovery li { margin: 4px 0; }
+code.command { display: block; margin: 6px 0; padding: 6px 8px; border-radius: 6px; background: var(--bg); overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; }
+h2[tabindex="-1"]:focus { outline: none; }
+h2[tabindex="-1"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+
+@media (forced-colors: active) {
+  #apply-dialog { border: 2px solid CanvasText; }
+  #apply-dialog::backdrop { background: Canvas; opacity: 0.6; }
+  .recovery, code.command { border: 1px solid CanvasText; }
+}

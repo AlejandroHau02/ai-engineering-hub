@@ -60,7 +60,7 @@ jobs:
       - name: Runtime isolation smoke and desktop Python tests
         run: |
           python -I desktop/scripts/smoke_runtime.py
-          python -m unittest tests.test_desktop_runtime tests.test_desktop_portable tests.test_sync_preview -v
+          python -m unittest tests.test_desktop_runtime tests.test_desktop_portable tests.test_sync_preview tests.test_bound_plan -v
       - name: Rust tests
         working-directory: desktop/src-tauri
         run: cargo test --locked
@@ -92,6 +92,24 @@ jobs:
           ./desktop/scripts/launch_smoke.ps1 -Exe $exe -Out "$ev/portable-sincronizacion.png" -Isolated -Screen sincronizacion -HomeOverride $disposable -ExpectText 'Vista previa: 12 cambios propuestos'
           if (Get-ChildItem $disposable -Force) { throw 'preview wrote into the disposable home' }
           ./desktop/scripts/launch_smoke.ps1 -Exe $exe -Out "$ev/portable-sincronizacion-home.png" -Isolated -Screen sincronizacion -ExpectText 'Vista previa:'
+          # Phase 2B: review → confirm → apply on a disposable home (never the real profile).
+          $applyHome = Join-Path $env:RUNNER_TEMP 'apply-home'
+          New-Item -ItemType Directory -Force "$applyHome/.claude" | Out-Null
+          Set-Content -Encoding utf8 "$applyHome/.claude/CLAUDE.md" '# Personal notes'
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe -Out "$ev/portable-aplicado.png" -Isolated -Screen sincronizacion -HomeOverride $applyHome -Apply -ExpectText 'Cambios aplicados y verificados'
+          if (-not (Select-String -Quiet -Path "$applyHome/.claude/CLAUDE.md" -Pattern '# Personal notes')) { throw 'personal content was not preserved' }
+          if (-not (Get-ChildItem "$applyHome/.claude" -Filter 'CLAUDE.md.bak.*')) { throw 'no backup of the updated file' }
+          $env:USERPROFILE_SAVED = $env:USERPROFILE
+          $check = & { $env:USERPROFILE = $applyHome; & "$($root.FullName)/python/python.exe" -I -B "$($root.FullName)/syncode/scripts/sync.py" --preview --target both --format json } | ConvertFrom-Json
+          $env:USERPROFILE = $env:USERPROFILE_SAVED
+          if ($check.status -ne 'unchanged') { throw "post-apply CLI preview is $($check.status)" }
+          # Tampered package: integrity blocks every command before any process starts.
+          $tampered = Join-Path $env:RUNNER_TEMP 'portable-tampered'
+          Copy-Item -Recurse $root.FullName $tampered
+          Add-Content -Path "$tampered/syncode/scripts/transaction.py" -Value '# tampered'
+          $tamperHome = Join-Path $env:RUNNER_TEMP 'tamper-home'
+          ./desktop/scripts/launch_smoke.ps1 -Exe "$tampered/syncode-desktop.exe" -Out "$ev/portable-integridad.png" -Isolated -HomeOverride $tamperHome -ExpectText 'verificación de integridad'
+          if (Get-ChildItem $tamperHome -Force) { throw 'tampered package wrote into the home' }
       - name: NSIS installer — install outside the repository and launch
         run: |
           $setup = Get-ChildItem desktop/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1

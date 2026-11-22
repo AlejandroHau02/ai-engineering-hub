@@ -38,7 +38,7 @@
     "instructions:modified": "El bloque gestionado difiere del de esta versión. Una sincronización lo reemplazaría y conservaría el contenido fuera de los marcadores. Compruébalo en Sincronización.",
     modified: "Revisa los cambios locales; SYNCODE no los sobrescribirá.",
     "unsafe-or-unreadable": "Inspección manual de la ruta (enlace simbólico, junction o permisos).",
-    "transaction:pending-recovery": "Ejecuta «python scripts/sync.py --recover» y vuelve a diagnosticar.",
+    "transaction:pending-recovery": "Hay una transacción sin terminar. Recupérala con el runtime integrado (pasos abajo) y vuelve a diagnosticar.",
     "transaction:unsafe": "Revisión manual del área de transacción (docs/TRANSACTION_RECOVERY.md). No uses --recover.",
     "lock:unexpected": "Inspección manual del archivo lock antes de cualquier sincronización.",
     "lock:unsafe": "Inspección manual de la ruta del archivo lock.",
@@ -60,7 +60,9 @@
       invalidJson: ["Respuesta no válida", `La respuesta de ${S.name} no es JSON válido y se descartó.`],
       contractMismatch: [`Respuesta de ${S.name} incompatible`, "La respuesta no cumple el contrato schemaVersion 1 que espera esta versión de la app y se descartó."],
       processFailed: ["El proceso terminó de forma inesperada", "El runtime Python finalizó con un código fuera del contrato."],
-      busy: ["Otra operación en curso", "SYNCODE ya está ejecutando un diagnóstico o una vista previa. Espera a que termine."],
+      busy: ["Otra operación en curso", "SYNCODE ya está ejecutando un diagnóstico, una vista previa o una aplicación. Espera a que termine."],
+      integrityFailed: ["El paquete de SYNCODE no supera la verificación de integridad",
+        "Algún archivo del runtime o del núcleo no coincide con esta versión de la app (falta, sobra o fue modificado). No se ejecutó nada. Reinstala la aplicación o vuelve a extraer el ZIP completo en una carpeta nueva."],
       bridge: ["La interfaz no puede comunicarse con la app", "El puente con SYNCODE Desktop no está disponible en esta ventana."],
     };
     return table[code] || ["La app no pudo comunicarse con el núcleo", "Fallo de transporte no reconocido."];
@@ -78,7 +80,10 @@
     "skill-upgrade-available": "Una skill instalada difiere de la versión actual. Si es idéntica a la versión v0.1 reconocida, puedes previsualizar su actualización.",
     "skill-modified": "Una skill instalada fue modificada localmente o no corresponde a una versión reconocida. SYNCODE no la sobrescribirá: requiere revisión manual.",
     "destination-conflict": "Un destino gestionado ya contiene archivos o carpetas ajenos a SYNCODE. Requiere revisión manual.",
-    "transaction-pending": "Hay una transacción de instalación sin terminar. Revísala y ejecuta «python scripts/sync.py --recover» antes de planificar.",
+    "transaction-pending": "Hay una transacción de instalación sin terminar. Recupérala con el runtime integrado (pasos abajo) antes de planificar.",
+    "stale-plan": "Los archivos cambiaron desde la vista previa.",
+    "destination-changed": "Un archivo cambió mientras se aplicaba el plan.",
+    "lock-busy": "Otra instalación o recuperación de SYNCODE está en curso.",
     "managed-markers-invalid": "Los marcadores del bloque gestionado de un archivo de instrucciones están repetidos, incompletos o desordenados. Revísalo manualmente.",
     "unsafe-path": "Un destino es un enlace simbólico, una junction o una ruta no permitida. Requiere inspección manual.",
     "io-error": "El sistema de archivos devolvió un error al leer un destino.",
@@ -98,6 +103,10 @@
     sincronizacion: { title: "Sincronización", runId: 0, running: false, current: null, lastGood: null },
   };
   let active = "diagnostico";
+  // Set by every command response: how to recover with the bundled runtime.
+  let recoveryCommand = null;
+  // True from the confirmation until the apply result is shown.
+  let applying = false;
   // Commands are serialized: the core runs one at a time, so a request made
   // while the other screen is busy waits for its turn instead of failing.
   let queue = Promise.resolve();
@@ -372,7 +381,8 @@
     if (blockers > 0 || derived.items.length) {
       const list = el("ul", {}, derived.items.map((item) => el("li", {},
         el("div", { class: "what" }, nested ? item.where : jumpButton(item.anchor, item.where), " — ", statusChip(item.info)),
-        el("p", { class: "next", text: item.next }))));
+        el("p", { class: "next", text: item.next }),
+        item.info.raw === "pending-recovery" && !nested ? recoverySteps() : null)));
       const extra = blockers - derived.items.filter((i) => i.info.level === "block").length;
       frag.append(el("section", { class: "panel review", "aria-label": "Requieren revisión" },
         el("h2", { text: "Requieren revisión" }),
@@ -493,13 +503,19 @@
       frag.append(el("p", { class: "note", text: "No se pudo comprobar si había una transacción en curso al terminar la vista previa." }));
     }
 
-    if (o.changes.length) {
+    if (o.changes.length) frag.append(changeCards(o.changes, o.home, null));
+    return renderPlanTail(o, at, nested, frag);
+  }
+
+  function changeCards(changes, home, doneLabel) {
+    const frag = document.createDocumentFragment();
+    {
       const groups = [
         { key: "claude", title: "Claude Code", entries: [] },
         { key: "codex", title: "Codex", entries: [] },
         { key: "other", title: "Otros archivos", entries: [] },
       ];
-      for (const change of o.changes) {
+      for (const change of changes) {
         const group = groups.find((g) => g.key === change.target) || groups[2];
         group.entries.push(change);
       }
@@ -507,39 +523,43 @@
       const shown = groups.reduce((n, g) => n + g.entries.length, 0);
       const cards = el("div", { class: "clients" });
       for (const group of groups.filter((g) => g.entries.length)) {
-        const card = el("section", { class: "panel client", "aria-label": `${group.title}: cambios propuestos` },
+        const card = el("section", { class: "panel client", "aria-label": `${group.title}: ${doneLabel ? "cambios escritos" : "cambios propuestos"}` },
           el("header", {}, el("h3", { text: group.title }),
             el("span", { class: "count", text: plural(group.entries.length, "cambio", "cambios") })));
         card.append(el("ul", { class: "rows" }, group.entries.map((change) => {
-          const action = changeAction(change);
+          const action = doneLabel ? { label: change.kind === "CREATE" ? "Creado" : "Actualizado", level: "ok" } : changeAction(change);
           return el("li", { class: "row" },
             el("span", { class: "name" }, componentLabel(change),
-              pathText("span", { class: "hint path" }, homePath(o.home, change.path))),
+              pathText("span", { class: "hint path" }, homePath(home, change.path))),
             statusChip(action));
         })));
         cards.append(card);
       }
       frag.append(cards);
-      if (shown !== o.changes.length) {
+      if (shown !== changes.length) {
         frag.append(el("p", { class: "note", text: "Algunos cambios no pudieron agruparse." }));
       }
     }
+    return frag;
+  }
 
+  function renderPlanTail(o, at, nested, frag) {
     const technical = nested ? null : el("details", { class: "technical", "data-plan-details": true },
       el("summary", { text: "Detalle técnico" }),
       el("dl", {},
         el("dt", { text: "Identificador del plan (técnico)" }),
         el("dd", {}, el("code", { text: o.planId })),
         el("dt", { text: "Qué significa" }),
-        el("dd", { text: "Identifica este lote exacto de cambios. No autoriza ninguna ejecución, no se usa en esta versión y deja de ser válido si cambia cualquier archivo implicado." }),
+        el("dd", { text: "Identifica este lote exacto de cambios. No es una autorización: aplicar exige tu confirmación, se puede hacer una sola vez y el núcleo vuelve a comprobar el lote bajo su bloqueo antes de escribir. La huella completa nunca sale del proceso de la app." }),
         el("dt", { text: "Equivalente en CLI (desde un checkout de SYNCODE)" }),
         el("dd", {}, el("code", { text: cliEquivalent(o.options) })),
         el("dt", { text: "Home analizado" }),
         pathText("dd", {}, o.home)));
+    if (!nested && o.status === "planned") frag.append(applyArea(o));
     if (technical) frag.append(technical);
     frag.append(el("p", { class: "note" },
-      `Generada a las ${formatTime(at)}. Es una instantánea: los archivos pueden cambiar después. `,
-      "Esta versión no aplica cambios; el CLI recalcula el plan al ejecutarse."));
+      `Generada a las ${formatTime(at)}. Es una instantánea: si algún archivo cambia antes de aplicar, `,
+      "no se aplicará nada y tendrás que generar una nueva vista previa."));
     if (!nested) {
       frag.prepend(el("p", { class: "panel notice-panel level-warn stale-notice", hidden: true, "data-stale-notice": true },
         "Esta vista previa corresponde a otras opciones. Genérala de nuevo para ver el plan actual."));
@@ -564,6 +584,7 @@
     if (o.code === "transaction-pending") {
       actions.append(el("a", { href: "#diagnostico", class: "link", text: "Ir a Diagnóstico" }));
     }
+    const steps = o.code === "transaction-pending" ? recoverySteps() : null;
     frag.append(el("section", { class: "panel verdict level-warn refusal", "aria-labelledby": "sync-refusal" },
       icon("warn"),
       el("div", {},
@@ -573,6 +594,7 @@
         o.code === "skill-upgrade-available" && !o.options.upgradeSkills
           ? el("p", { class: "sub", text: "Al activar la vista previa de actualizaciones, una skill modificada localmente seguiría deteniendo la planificación." })
           : null,
+        steps,
         actions.childNodes.length ? actions : null,
         el("details", {}, el("summary", { text: "Detalle técnico" }),
           el("dl", {},
@@ -586,12 +608,304 @@
   function markStale() {
     const state = screens.sincronizacion;
     const current = state.current && state.current.run.outcome;
-    const stale = Boolean(current && current.options && !sameOptions(current.options, readOptions()));
+    const stale = Boolean(current && current.kind === "plan" && !sameOptions(current.options, readOptions()));
+    if (stale && current.applyToken) {
+      // Authorization ends as soon as the options change: forget it here and
+      // in Rust (single-use plan store), even if the options are changed back.
+      current.applyToken = null;
+      current.discarded = true;
+      invokeCommand("discard_plan").catch(() => undefined);
+    }
+    const area = document.querySelector("#sync-result [data-apply-area]");
+    if (area && current && current.kind === "plan") area.replaceWith(applyArea(current));
     const notice = document.querySelector("#sync-result [data-stale-notice]");
     if (notice) notice.hidden = !stale;
     const details = document.querySelector("#sync-result [data-plan-details]");
     if (details) details.hidden = stale; // never show a plan id for other options
     $("sync-result").classList.toggle("is-stale", stale);
+    const canApply = Boolean(current && current.kind === "plan" && current.applyToken && !stale);
+    $("sync-run").classList.toggle("primary", !canApply); // one primary action at a time
+  }
+
+  // ---- Apply ----------------------------------------------------------------------
+  function invokeCommand(command, args) {
+    const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+    if (typeof invoke !== "function") return Promise.reject(new Error("bridge"));
+    return invoke(command, args);
+  }
+
+  function doctorPendingRecovery() {
+    const last = screens.diagnostico.lastGood;
+    return Boolean(last && last.run.outcome.report.transaction !== "clear");
+  }
+
+  function applyBlockedReason(o) {
+    if (o.discarded) return "Las opciones cambiaron: genera una nueva vista previa para aplicar.";
+    if (o.recoveryRequired !== false) return "Hay una transacción de instalación en curso o sin terminar; revisa Diagnóstico.";
+    if (doctorPendingRecovery()) return "Diagnóstico detectó una recuperación pendiente; resuélvela antes de aplicar.";
+    if (!o.applyToken) return "Esta vista previa ya no puede aplicarse; genera una nueva.";
+    return null;
+  }
+
+  function applyArea(o) {
+    const reason = applyBlockedReason(o);
+    if (reason) {
+      return el("div", { class: "apply-area", "data-apply-area": true },
+        el("p", { class: "note", text: `Aplicar no está disponible: ${reason}` }));
+    }
+    const n = o.changes.length;
+    const button = el("button", { type: "button", class: "primary", id: "apply-open",
+      text: `Aplicar ${plural(n, "cambio", "cambios")}…` });
+    button.addEventListener("click", () => openApplyDialog());
+    return el("div", { class: "apply-area", "data-apply-area": true },
+      button,
+      el("p", { class: "note", text: "Pedirá confirmación. La integridad del paquete se verificó al calcular esta vista previa y se vuelve a verificar antes de escribir." }));
+  }
+
+  function countsByClient(changes) {
+    const names = { claude: "Claude Code", codex: "Codex" };
+    const counts = new Map();
+    for (const c of changes) {
+      const key = names[c.target] || "Otros archivos";
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return [...counts.entries()];
+  }
+
+  function openApplyDialog() {
+    const state = screens.sincronizacion;
+    const current = state.current;
+    if (!current || applying || state.running) return;
+    const o = current.run.outcome;
+    if (o.kind !== "plan" || applyBlockedReason(o) || !sameOptions(o.options, readOptions())) return;
+    const n = o.changes.length;
+    $("apply-dialog-title").textContent = `¿Aplicar estos ${plural(n, "cambio", "cambios")}?`;
+    $("apply-dialog-scope").textContent = `Alcance: ${scopeText(o.options)} · vista previa de las ${formatTime(current.at)}.`;
+    $("apply-dialog-counts").replaceChildren(...countsByClient(o.changes)
+      .map(([name, count]) => el("li", { text: `${name}: ${plural(count, "cambio", "cambios")}` })));
+    const updates = o.changes.filter((c) => c.kind === "UPDATE").length;
+    const upgrades = o.changes.filter((c) => c.kind === "UPGRADE").length;
+    const creates = o.changes.filter((c) => c.kind === "CREATE").length;
+    const warnings = [
+      updates || upgrades ? "Se hará una copia .bak de cada archivo existente antes de modificarlo." : null,
+      o.changes.some((c) => c.componentType === "instructions" && c.kind === "UPDATE")
+        ? "En CLAUDE.md / AGENTS.md solo se reemplaza la sección gestionada por SYNCODE; el resto se conserva." : null,
+      creates ? `Se crearán ${plural(creates, "archivo nuevo", "archivos nuevos")}.` : null,
+      upgrades ? `Se actualizarán ${plural(upgrades, "skill v0.1 sin modificaciones locales", "skills v0.1 sin modificaciones locales")}.` : null,
+      "Si algún archivo cambió desde la vista previa, no se aplicará nada.",
+      "No cierres la app mientras se aplica.",
+      "Todo ocurre en este equipo: no se sube nada ni se ejecuta ningún agente.",
+    ].filter(Boolean);
+    $("apply-dialog-warnings").replaceChildren(...warnings.map((w) => el("li", { text: w })));
+    $("apply-confirm").textContent = `Aplicar ${plural(n, "cambio", "cambios")}`;
+    const dialog = $("apply-dialog");
+    dialog.returnValue = "";
+    dialog.dataset.token = o.applyToken;
+    dialog.showModal();
+  }
+
+  function onApplyDialogClose() {
+    const dialog = $("apply-dialog");
+    const token = dialog.dataset.token;
+    delete dialog.dataset.token;
+    if (dialog.returnValue !== "apply" || !token) {
+      const opener = $("apply-open");
+      if (opener) opener.focus();
+      return;
+    }
+    const current = screens.sincronizacion.current;
+    const o = current && current.run.outcome;
+    // The plan on screen must still be the confirmed one.
+    if (!o || o.kind !== "plan" || o.applyToken !== token || !sameOptions(o.options, readOptions())) return;
+    runApply(current, token);
+  }
+
+  async function runApply(planEntry, token) {
+    const state = screens.sincronizacion;
+    if (applying || state.running) return;
+    applying = true;
+    state.running = true;
+    planEntry.run.outcome.applyToken = null; // single use, also in the UI
+    const form = $("sync-form");
+    for (const control of form.elements) control.disabled = true;
+    $("diag-run").setAttribute("aria-disabled", "true");
+    const n = planEntry.run.outcome.changes.length;
+    const result = $("sync-result");
+    result.setAttribute("aria-busy", "true");
+    result.replaceChildren(el("section", { class: "panel loading", "aria-label": "Aplicando cambios", tabindex: "-1", id: "sync-applying" },
+      el("span", { class: "spinner", "aria-hidden": "true" }),
+      el("p", { text: `Aplicando ${plural(n, "cambio", "cambios")}… No cierres la app.` })));
+    $("sync-applying").focus();
+    announce("sincronizacion", "Aplicando cambios…");
+    $("sync-meta").textContent = "Aplicando…";
+    const call = queue.then(() => invokeCommand("apply_sync", { token }));
+    queue = call.catch(() => undefined);
+    let run;
+    try {
+      run = await call;
+    } catch (error) {
+      run = { outcome: { kind: "unknown", detail: String((error && error.message) || error), recoveryCommand: recoveryCommand || "" } };
+    }
+    run.phase = "apply";
+    if (run.recoveryCommand) recoveryCommand = run.recoveryCommand;
+    applying = false;
+    state.running = false;
+    for (const control of form.elements) control.disabled = false;
+    $("diag-run").removeAttribute("aria-disabled");
+    const at = new Date();
+    state.current = { run, at, plan: planEntry };
+    paintScreen("sincronizacion");
+    updateFooter(run);
+    const seconds = typeof run.durationMs === "number" ? ` en ${(run.durationMs / 1000).toFixed(1)} s` : "";
+    $("sync-meta").textContent = `Aplicación: ${formatTime(at)}${seconds}.`;
+    const heading = $("sync-apply-result");
+    if (heading && active === "sincronizacion") heading.focus();
+    else announce("sincronizacion", APPLY_ANNOUNCE(run.outcome));
+    // Whatever happened, the real state comes from Doctor.
+    runScreen("diagnostico", null, true);
+  }
+
+  function APPLY_ANNOUNCE(o) {
+    return {
+      applied: o.verified ? "Cambios aplicados y verificados." : "Cambios aplicados, sin verificar.",
+      appliedWithError: "Cambios aplicados con un error posterior.",
+      stale: "No se aplicó nada: los archivos cambiaron desde la vista previa.",
+      rejected: "La aplicación se rechazó.",
+      recoveryRequired: "Recuperación necesaria.",
+      busy: "No se aplicó nada: otra instalación está en curso.",
+      notAuthorized: "No se aplicó nada: la autorización ya no es válida.",
+      transport: "No se aplicó nada.",
+    }[o.kind] || "Estado desconocido tras aplicar; revisa Diagnóstico.";
+  }
+
+  function recoverySteps() {
+    if (!recoveryCommand) return null;
+    const command = recoveryCommand;
+    const copy = el("button", { type: "button", class: "secondary", text: "Copiar comando" });
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(command);
+        copy.textContent = "Copiado";
+      } catch (error) {
+        const range = document.createRange();
+        range.selectNodeContents(code);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        copy.textContent = "Selecciónalo y copia con Ctrl+C";
+      }
+    });
+    const code = el("code", { class: "command", text: command });
+    return el("div", { class: "recovery" },
+      el("p", { class: "recovery-title", text: "Cómo recuperar (la app no lo hace por ti):" }),
+      el("ol", {},
+        el("li", { text: "Abre PowerShell. No ejecutes otra sincronización mientras tanto." }),
+        el("li", {}, "Ejecuta este comando, que usa el runtime integrado de esta app: ", code, " ", copy),
+        el("li", {}, "Vuelve a ", el("a", { href: "#diagnostico", class: "link", text: "Diagnóstico" }), " y pulsa «Volver a diagnosticar».")));
+  }
+
+  function renderApplyResult(run, at) {
+    const o = run.outcome;
+    const frag = document.createDocumentFragment();
+    const plan = run.plan || (screens.sincronizacion.current && screens.sincronizacion.current.plan);
+    const home = plan && plan.run.outcome.home;
+    let level = "warn";
+    let title;
+    const body = [];
+    let steps = null;
+    switch (o.kind) {
+      case "applied":
+        level = o.verified ? "ok" : "warn";
+        title = o.verified ? "Cambios aplicados y verificados" : "Cambios aplicados, sin verificar";
+        body.push(`${plural(o.changes.length, "cambio escrito", "cambios escritos")} por el núcleo de SYNCODE para: ${scopeText(o.options)}.`);
+        body.push(o.verified ? "Una nueva vista previa con las mismas opciones no encuentra cambios pendientes."
+          : "La comprobación posterior no pudo confirmar el resultado. Revisa Diagnóstico.");
+        body.push("Los archivos que ya existían conservan una copia .bak junto al original.");
+        break;
+      case "appliedWithError":
+        title = "Cambios aplicados con un error posterior";
+        body.push("El núcleo confirmó la escritura del lote, pero informó un error después. No vuelvas a aplicar.");
+        if (o.cleanupPending) {
+          body.push("Falta limpiar el área de transacción.");
+          steps = recoverySteps();
+        }
+        break;
+      case "stale":
+        title = "No se aplicó nada: los archivos cambiaron desde la vista previa";
+        body.push("El núcleo volvió a calcular el plan bajo su bloqueo y ya no coincidía con el que revisaste. Genera una nueva vista previa y revísala de nuevo.");
+        break;
+      case "rejected":
+        level = "block";
+        title = "La aplicación se rechazó";
+        body.push(REFUSAL[o.code] || `El núcleo rechazó la aplicación (${o.code}).`);
+        body.push(o.outcome === "rolled-back" ? "Se restauró el estado anterior de todos los archivos." : "No se modificó ningún archivo.");
+        break;
+      case "recoveryRequired":
+        level = "block";
+        title = "Recuperación necesaria";
+        body.push({
+          "rolled-back": "No quedó ningún cambio aplicado; solo falta limpiar el área de transacción.",
+          "recovery-pending": "Los archivos pueden haber quedado parcialmente aplicados. El journal de la transacción se conservó para recuperarlos.",
+          "not-started": "Hay una transacción anterior sin terminar; no se escribió nada nuevo.",
+        }[o.outcome] || "La transacción necesita recuperación.");
+        steps = recoverySteps();
+        break;
+      case "busy":
+        title = "No se aplicó nada: otra instalación está en curso";
+        body.push("Otra instalación o recuperación de SYNCODE tiene el bloqueo. Espera a que termine y genera una nueva vista previa.");
+        break;
+      case "notAuthorized":
+        title = "No se aplicó nada: la autorización ya no es válida";
+        body.push({
+          noPlan: "La vista previa ya se usó, se reemplazó o se descartó al cambiar las opciones.",
+          wrongToken: "La autorización no coincide con la vista previa vigente.",
+          expired: "La vista previa caducó (10 minutos).",
+        }[o.reason] || "Genera una nueva vista previa.");
+        break;
+      case "transport": {
+        const [what, text] = transportText(o.code, SUBJECTS.sincronizacion);
+        return [el("section", { class: "panel failure", "aria-labelledby": "sync-apply-result" },
+          icon("failure"),
+          el("div", {},
+            el("p", { class: "origin", text: "No se ejecutó la aplicación" }),
+            el("h2", { id: "sync-apply-result", tabindex: "-1", text: `No se aplicó nada: ${what.toLowerCase()}` }),
+            el("p", { text }),
+            el("details", {}, el("summary", { text: "Detalle técnico" }),
+              el("dl", {}, el("dt", { text: "Código" }), el("dd", { text: o.code }),
+                el("dt", { text: "Detalle" }), pathText("dd", {}, o.detail || "—")))))];
+      }
+      default: // unknown
+        return [el("section", { class: "panel failure", "aria-labelledby": "sync-apply-result" },
+          icon("failure"),
+          el("div", {},
+            el("p", { class: "origin", text: "Resultado no verificable" }),
+            el("h2", { id: "sync-apply-result", tabindex: "-1", text: "Estado desconocido tras aplicar" }),
+            el("p", { text: "La app no pudo confirmar qué ocurrió: puede que se hayan escrito algunos archivos. Diagnóstico se actualizó automáticamente; si indica una recuperación pendiente, sigue estos pasos." }),
+            recoverySteps(),
+            el("details", {}, el("summary", { text: "Detalle técnico" }),
+              el("dl", {}, el("dt", { text: "Detalle" }), pathText("dd", {}, o.detail || "—")))))];
+    }
+    frag.append(el("section", { class: `panel verdict level-${level}`, "aria-labelledby": "sync-apply-result" },
+      icon(level === "ok" ? "ok" : level),
+      el("div", {},
+        el("h2", { id: "sync-apply-result", tabindex: "-1", text: title }),
+        body.map((text) => pathText("p", {}, text)),
+        o.message ? el("details", {}, el("summary", { text: "Detalle técnico" }),
+          el("dl", {}, el("dt", { text: "Código" }), el("dd", { text: o.code || "—" }),
+            el("dt", { text: "Mensaje del núcleo" }), pathText("dd", {}, o.message))) : null,
+        steps,
+        el("div", { class: "actions" },
+          el("a", { href: "#diagnostico", class: "link", text: "Ver Diagnóstico actualizado" })))));
+    if (o.kind === "applied" && home) {
+      frag.append(changeCards(o.changes, home, "escritos"));
+    }
+    if (plan) {
+      const used = el("details", { class: "stale" },
+        el("summary", { text: `Plan revisado a las ${formatTime(plan.at)} (ya usado)` }));
+      used.append(renderPlan(plan.run, plan.at, true));
+      frag.append(used);
+    }
+    return frag;
   }
 
   // ---- per-screen runner --------------------------------------------------------
@@ -620,6 +934,7 @@
       meta: (at, seconds) => `Último diagnóstico: ${formatTime(at)}${seconds}.`,
       after() {
         $("upgrade-hint").hidden = !doctorFoundUpgrades();
+        markStale(); // a pending recovery found by Doctor disables Apply
       },
     },
     sincronizacion: {
@@ -628,6 +943,7 @@
       args: () => ({ options: readOptions() }),
       busy: "Calculando la vista previa",
       paint(run, at) {
+        if (run.phase === "apply") return renderApplyResult(run, at);
         if (run.outcome.kind === "plan") return renderPlan(run, at, false);
         if (run.outcome.kind === "plannerRefusal") return renderRefusal(run, at);
         return [failurePanel("sincronizacion", run.outcome, at, (b) => runScreen("sincronizacion", b)),
@@ -636,6 +952,7 @@
       good: (run) => run.outcome.kind === "plan",
       announce(run) {
         const o = run.outcome;
+        if (run.phase === "apply") return APPLY_ANNOUNCE(o);
         if (o.kind === "plan") {
           return o.status === "unchanged" ? "Vista previa lista: sin cambios."
             : `Vista previa lista: ${plural(o.changes.length, "cambio propuesto", "cambios propuestos")}; nada se ha escrito.`;
@@ -668,17 +985,17 @@
     ].filter(Boolean).join(" · ");
   }
 
-  async function runScreen(name, focusAfter) {
+  async function runScreen(name, focusAfter, silent) {
     const state = screens[name];
     const spec = SCREENS[name];
-    if (state.running) return;
+    if (state.running || (applying && !silent)) return;
     const button = $(`${spec.prefix}-run`);
     const result = $(`${spec.prefix}-result`);
     const id = ++state.runId;
     state.running = true;
     button.setAttribute("aria-disabled", "true");
     result.setAttribute("aria-busy", "true");
-    announce(name, `${spec.busy}…`);
+    if (!silent) announce(name, `${spec.busy}…`);
     if (state.current || name !== "diagnostico") result.replaceChildren(loadingPanel(spec.busy));
     const args = spec.args(); // options as chosen when the user asked
     const other = Object.keys(screens).find((key) => key !== name && screens[key].running);
@@ -709,6 +1026,7 @@
       return;
     }
     const at = new Date();
+    if (typeof run.recoveryCommand === "string") recoveryCommand = run.recoveryCommand;
     if (typeof run.userHome === "string") homes.add(run.userHome);
     if (run.outcome.kind === "report" && typeof run.outcome.report.home === "string") homes.add(run.outcome.report.home);
     state.current = { run, at };
@@ -717,7 +1035,7 @@
     updateFooter(run);
     const seconds = typeof run.durationMs === "number" ? ` en ${(run.durationMs / 1000).toFixed(1)} s` : "";
     $(`${spec.prefix}-meta`).textContent = spec.meta(at, seconds);
-    announce(name, spec.announce(run));
+    if (!silent) announce(name, spec.announce(run));
     // Keep focus on the trigger if it is still on the visible screen.
     if (focusAfter && name === active) (document.contains(focusAfter) ? focusAfter : button).focus();
   }
@@ -768,10 +1086,12 @@
     });
     $("sync-form").addEventListener("change", markStale);
     $("show-paths").addEventListener("change", refreshPaths);
+    $("apply-dialog").addEventListener("close", onApplyDialogClose);
     document.addEventListener("keydown", (event) => {
       // F5 / Ctrl+R run the active screen's action instead of reloading.
       if (event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r")) {
         event.preventDefault();
+        if (applying || $("apply-dialog").open) return;
         runScreen(active, $(`${SCREENS[active].prefix}-run`));
       }
     });

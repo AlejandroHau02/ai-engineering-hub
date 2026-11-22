@@ -63,6 +63,8 @@ impl Script {
 pub enum TransportCode {
     /// The bundled runtime or core files are missing.
     BundleIncomplete,
+    /// The bundle does not match the table compiled into the executable.
+    IntegrityFailed,
     /// The OS refused to start the interpreter.
     SpawnFailed,
     Timeout,
@@ -95,6 +97,48 @@ impl Transport {
             detail: detail.into(),
             exit_code,
         }
+    }
+
+    /// Failures that happen before any process starts: nothing was executed.
+    pub fn before_launch(&self) -> bool {
+        matches!(
+            self.code,
+            TransportCode::BundleIncomplete
+                | TransportCode::IntegrityFailed
+                | TransportCode::SpawnFailed
+                | TransportCode::Busy
+        )
+    }
+}
+
+/// A plan fingerprint as produced by the core (`syncode-plan-v1:sha256:<64
+/// lowercase hex>`). The only non-literal argument the runner accepts; it can
+/// only be constructed from validated core output and never comes from the UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fingerprint(String);
+
+impl Fingerprint {
+    pub const PREFIX: &'static str = "syncode-plan-v1:sha256:";
+
+    pub fn parse(value: &str) -> Option<Self> {
+        let hex = value.strip_prefix(Self::PREFIX)?;
+        (hex.len() == 64
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        .then(|| Fingerprint(value.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Short display form; the full value never leaves Rust.
+    pub fn short(&self) -> String {
+        format!(
+            "syncode-plan-v1 · {}",
+            &self.0[Self::PREFIX.len()..Self::PREFIX.len() + 12]
+        )
     }
 }
 
@@ -264,11 +308,17 @@ impl Exited {
     }
 }
 
-/// Start `script` on the embedded interpreter with literal arguments.
+/// Start `script` on the embedded interpreter with literal arguments and, for
+/// a bound apply only, `--expect-plan <fingerprint>`.
+///
+/// The bundle is verified against the table compiled into the executable and
+/// pinned (see `integrity`) before the process starts; the pin is held until
+/// the process has exited.
 pub fn execute(
     runtime: &Runtime,
     script: Script,
     args: &[&'static str],
+    bound: Option<&Fingerprint>,
     env: &[(String, OsString)],
     timeout: Duration,
 ) -> Result<Exited, Transport> {
@@ -280,14 +330,29 @@ pub fn execute(
             None,
         ));
     }
+    let _pinned = verify(runtime)?;
     let mut command = Command::new(&runtime.python);
     command
         .args(PYTHON_FLAGS)
         .arg(runtime.script_path(script))
-        .args(args)
-        .current_dir(&runtime.workdir)
+        .args(args);
+    if let Some(fingerprint) = bound {
+        command.arg("--expect-plan").arg(fingerprint.as_str());
+    }
+    // PATH/PATHEXT only serve Doctor's `shutil.which` detection of the CLIs;
+    // the installer needs neither, so they never reach a sync process.
+    let needs_path = script == Script::Doctor;
+    // The working directory is the verified interpreter directory, never the
+    // (unverified) folder that contains the executable.
+    let cwd = runtime.python.parent().unwrap_or(&runtime.workdir);
+    command
+        .current_dir(cwd)
         .env_clear()
-        .envs(env.iter().map(|(k, v)| (k, v)))
+        .envs(
+            env.iter()
+                .filter(|(k, _)| needs_path || (k != "PATH" && k != "PATHEXT"))
+                .map(|(k, v)| (k, v)),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -322,11 +387,12 @@ pub fn execute(
             }
             Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(error) => {
+                // The process was started: its effects are unknown.
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(Transport::new(
-                    TransportCode::SpawnFailed,
-                    error.to_string(),
+                    TransportCode::ProcessFailed,
+                    format!("lost track of the running process: {error}"),
                     None,
                 ));
             }
@@ -356,6 +422,16 @@ pub fn execute(
             stderr_len,
         }),
     }
+}
+
+fn verify(runtime: &Runtime) -> Result<Option<crate::integrity::Pinned>, Transport> {
+    #[cfg(test)]
+    if runtime.script_override.is_some() {
+        return Ok(None); // test hook: arbitrary scripts are not part of the bundle
+    }
+    crate::integrity::pin(&runtime.workdir)
+        .map(Some)
+        .map_err(|why| Transport::new(TransportCode::IntegrityFailed, why, None))
 }
 
 /// Common schemaVersion 1 framing checks shared by every command.
@@ -637,6 +713,51 @@ mod tests {
     }
 
     #[test]
+    fn fingerprint_accepts_only_core_format() {
+        let ok = format!("{}{}", Fingerprint::PREFIX, "a".repeat(64));
+        let fp = Fingerprint::parse(&ok).unwrap();
+        assert_eq!(fp.short(), "syncode-plan-v1 · aaaaaaaaaaaa");
+        for bad in [
+            format!("{}{}", Fingerprint::PREFIX, "A".repeat(64)),
+            format!("{}{}", Fingerprint::PREFIX, "a".repeat(63)),
+            format!("{}{} --apply", Fingerprint::PREFIX, "a".repeat(64)),
+            "a".repeat(64),
+            String::new(),
+        ] {
+            assert!(Fingerprint::parse(&bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn tampered_bundle_never_starts_a_process() {
+        let Some(runtime) = staged() else { return };
+        let copy = scratch("tampered-run");
+        for tree in ["python", "syncode"] {
+            copy_tree(&runtime.workdir.join(tree), &copy.join(tree));
+        }
+        // A sentinel in the entry point would prove execution.
+        let sentinel = copy.join("ran.txt");
+        let sync = copy.join("syncode").join("scripts").join("sync.py");
+        let mut code = std::fs::read(&sync).unwrap();
+        code.extend_from_slice(
+            format!("\nopen(r'{}', 'w').write('ran')\n", sentinel.display()).as_bytes(),
+        );
+        std::fs::write(&sync, code).unwrap();
+        let result = execute(
+            &Runtime::from_resource_dir(&copy),
+            Script::Sync,
+            &["--preview", "--format", "json"],
+            None,
+            &[],
+            Duration::from_secs(20),
+        );
+        let failure = result.expect_err("tampered bundle must not run");
+        assert_eq!(failure.code, TransportCode::IntegrityFailed);
+        assert!(failure.before_launch());
+        assert!(!sentinel.exists(), "tampered code was executed");
+    }
+
+    #[test]
     fn child_env_is_an_allowlist() {
         let env = child_env(|name| match name {
             "PATH" => Some("C:\\bin".into()),
@@ -666,6 +787,7 @@ mod tests {
             &Runtime::from_resource_dir(&dir),
             Script::Doctor,
             &[],
+            None,
             &[],
             Duration::from_secs(5),
         );
@@ -723,6 +845,7 @@ mod tests {
             &Runtime::from_resource_dir(&copy),
             Script::Sync,
             &[],
+            None,
             &[],
             Duration::from_secs(5),
         );
@@ -740,7 +863,7 @@ mod tests {
         let Some(runtime) = staged() else { return };
         let rt = fake(&runtime, "slow", "import time\ntime.sleep(30)\n");
         let started = Instant::now();
-        let result = execute(&rt, Script::Doctor, &[], &[], Duration::from_secs(1));
+        let result = execute(&rt, Script::Doctor, &[], None, &[], Duration::from_secs(1));
         assert_eq!(result.expect_err("timeout").code, TransportCode::Timeout);
         assert!(started.elapsed() < Duration::from_secs(10));
     }
@@ -753,7 +876,7 @@ mod tests {
             "big",
             "import sys\nsys.stdout.write('x' * (3 << 20))\nsys.stderr.write('y' * (1 << 20))\n",
         );
-        let exited = execute(&rt, Script::Doctor, &[], &[], Duration::from_secs(20)).unwrap();
+        let exited = execute(&rt, Script::Doctor, &[], None, &[], Duration::from_secs(20)).unwrap();
         assert!(exited.overflow);
         assert_eq!(exited.stdout.len(), MAX_STDOUT);
     }

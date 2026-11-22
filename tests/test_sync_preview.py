@@ -202,5 +202,37 @@ class PreviewIsReadOnlyTests(unittest.TestCase):
         self.assertTrue(result["violations"], "the audit hook must observe real writes")
 
 
+
+@unittest.skipUnless(os.name == "nt", "read-only files block replace/unlink only on Windows")
+class FailedApplyRollbackTests(unittest.TestCase):
+    """A write failure during a bound apply rolls back and leaves no debris."""
+
+    def test_read_only_destination_rolls_back_cleanly(self):
+        import stat
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude").mkdir()
+            instructions = home / ".claude" / "CLAUDE.md"
+            instructions.write_text("# Personal\n", encoding="utf-8")
+            _, preview = run_json(["--preview", "--target", "claude", "--home", tmp,
+                                   "--format", "json"])
+            os.chmod(instructions, stat.S_IREAD)
+            try:
+                before = sorted(p.relative_to(home).as_posix() for p in home.rglob("*"))
+                code, result = run_json(["--target", "claude", "--apply", "--expect-plan",
+                                         preview["plan"]["fingerprint"], "--home", tmp,
+                                         "--format", "json"])
+                after = sorted(p.relative_to(home).as_posix() for p in home.rglob("*")
+                               if p.name != ".ai-engineering-hub.sync.lock")
+            finally:
+                os.chmod(instructions, stat.S_IWRITE | stat.S_IREAD)
+            self.assertEqual(code, 1)
+            self.assertEqual(result["transaction"]["outcome"], "rolled-back")
+            self.assertFalse(result["transaction"]["recoveryRequired"])
+            self.assertEqual(instructions.read_text(encoding="utf-8"), "# Personal\n")
+            # No temporary file, backup or workspace is left behind.
+            self.assertEqual(after, before)
+
+
 if __name__ == "__main__":
     unittest.main()

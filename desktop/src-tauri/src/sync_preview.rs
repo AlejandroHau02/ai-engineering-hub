@@ -7,7 +7,9 @@
 //! and projected into a small DTO: per-file hashes, `events[]` (local backup
 //! paths) and the full plan fingerprint never reach the webview.
 
-use crate::runner::{self, is_plain_relative, Exited, Runtime, Script, Transport, TransportCode};
+use crate::runner::{
+    self, is_plain_relative, Exited, Fingerprint, Runtime, Script, Transport, TransportCode,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::ffi::OsString;
@@ -15,7 +17,6 @@ use std::time::Duration;
 
 pub const PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CHANGES: usize = 500;
-const FINGERPRINT_PREFIX: &str = "syncode-plan-v1:sha256:";
 const MANAGED_ROOTS: [&str; 3] = [".claude", ".codex", ".agents"];
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +96,12 @@ pub enum PreviewOutcome {
         changes: Vec<PlannedChange>,
         /// Abbreviated, display-only identifier; not an authorization.
         plan_id: String,
+        /// Full fingerprint: kept in Rust (plan store), never serialized.
+        #[serde(skip)]
+        fingerprint: Fingerprint,
+        /// Opaque single-use id issued by the plan store when this plan may
+        /// be applied; `None` otherwise.
+        apply_token: Option<String>,
         /// `transaction.recoveryRequired` as observed on disk at the end:
         /// `true` means a transaction workspace appeared while previewing
         /// (another tool may be applying); `None` means it could not be
@@ -120,7 +127,7 @@ pub fn run(
     env: &[(String, OsString)],
     timeout: Duration,
 ) -> PreviewOutcome {
-    match runner::execute(runtime, Script::Sync, &argv(options), env, timeout) {
+    match runner::execute(runtime, Script::Sync, &argv(options), None, env, timeout) {
         Ok(exited) => match classify(options, &exited) {
             PreviewOutcome::Transport(failure) => {
                 PreviewOutcome::Transport(exited.annotate(failure))
@@ -204,9 +211,8 @@ pub fn classify(options: &PreviewOptions, exited: &Exited) -> PreviewOutcome {
             let Some(home) = str_of(&payload, "home") else {
                 return mismatch("home missing");
             };
-            let fingerprint = match str_of(plan, "fingerprint") {
-                Some(f) if f.strip_prefix(FINGERPRINT_PREFIX).map_or(false, is_hex64) => f,
-                _ => return mismatch("plan.fingerprint is not well-formed"),
+            let Some(fingerprint) = str_of(plan, "fingerprint").and_then(Fingerprint::parse) else {
+                return mismatch("plan.fingerprint is not well-formed");
             };
             let Some(raw_changes) = payload.get("changes").and_then(Value::as_array) else {
                 return mismatch("changes missing");
@@ -224,13 +230,14 @@ pub fn classify(options: &PreviewOptions, exited: &Exited) -> PreviewOutcome {
                     Err(why) => return mismatch(why),
                 }
             }
-            let hex = &fingerprint[FINGERPRINT_PREFIX.len()..];
             PreviewOutcome::Plan {
                 status: status.to_string(),
                 options: *options,
                 home: home.to_string(),
                 changes,
-                plan_id: format!("syncode-plan-v1 · {}", &hex[..12]),
+                plan_id: fingerprint.short(),
+                fingerprint,
+                apply_token: None,
                 recovery_required,
             }
         }
@@ -381,7 +388,7 @@ mod tests {
             "events": ["BACKUP C:\\Users\\x\\.claude\\CLAUDE.md.bak"],
             "transaction": {"outcome": "not-started", "recoveryRequired": false},
             "plan": {"algorithm": "syncode-plan-v1",
-                     "fingerprint": format!("{FINGERPRINT_PREFIX}{}", "b".repeat(64)),
+                     "fingerprint": format!("{}{}", Fingerprint::PREFIX, "b".repeat(64)),
                      "expected": null, "matched": null},
             "error": null
         })
