@@ -13,6 +13,18 @@ El primer comando solo muestra el plan. El segundo escribe **únicamente tras tu
 
 Ubicaciones globales: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.claude/skills/` y `~/.agents/skills/`. El Hub no agrega archivos a los proyectos.
 
+## Nueva skill de auditoría AppSec
+
+La quinta skill propia, `application-security-audit`, se incorpora al **mismo instalador** de las cuatro anteriores y no exige cambiar especialistas ni configurar un servicio. Desde un home con las cuatro skills sincronizadas, el dry-run normal muestra únicamente las nuevas rutas `~/.claude/skills/application-security-audit/SKILL.md` y `~/.agents/skills/application-security-audit/SKILL.md` (además de cualquier otra actualización del Hub que estuviera pendiente).
+
+```powershell
+python scripts/sync.py --target both
+# Revisar los destinos antes de aplicar:
+python scripts/sync.py --target both --apply
+```
+
+Para auditorías, solicita expresamente una revisión de seguridad de tu aplicación o PR. La skill prioriza hallazgos comprobables y consulta avisos/estándares vigentes cuando el asistente tenga acceso y autorización. **No ejecuta escáneres activos, no actualiza archivos automáticamente ni mantiene un proceso en segundo plano.** El contenido de las fuentes externas siempre requiere verificación humana antes de adoptar cambios permanentes.
+
 ## Actualizar skills previamente instaladas con v0.1
 
 La v0.2 incorpora mejoras de UX/UI, backend y revisión de código. El instalador original no podía actualizar las skills ya instaladas.
