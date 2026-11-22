@@ -56,12 +56,23 @@ try {
   foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key], 'Process') }
 }
 
-$deadline = (Get-Date).AddSeconds(30)
-while ($proc.MainWindowHandle -eq 0 -and -not $proc.HasExited -and (Get-Date) -lt $deadline) {
+function Get-WindowSize([IntPtr] $h) {
+  $r = New-Object SyncodeWin+RECT
+  if (-not [SyncodeWin]::GetWindowRect($h, [ref]$r)) { return 0 }
+  [Math]::Min($r.Right - $r.Left, $r.Bottom - $r.Top)
+}
+# On a first launch (fresh WebView2 profile) the process can briefly expose a
+# small auxiliary window as its main window; wait for the titled app window.
+$deadline = (Get-Date).AddSeconds(45)
+while (-not $proc.HasExited -and (Get-Date) -lt $deadline -and -not (
+    $proc.MainWindowHandle -ne 0 -and $proc.MainWindowTitle -like 'SYNCODE*' -and
+    (Get-WindowSize $proc.MainWindowHandle) -ge 300)) {
   Start-Sleep -Milliseconds 250
   $proc.Refresh()
 }
-if ($proc.HasExited -or $proc.MainWindowHandle -eq 0) { throw "Window did not open (exited: $($proc.HasExited))" }
+if ($proc.HasExited -or $proc.MainWindowHandle -eq 0 -or $proc.MainWindowTitle -notlike 'SYNCODE*') {
+  throw "Window did not open (exited: $($proc.HasExited), title: '$($proc.MainWindowTitle)')"
+}
 $title = $proc.MainWindowTitle
 Start-Sleep -Seconds $WaitSeconds
 $handle = $proc.MainWindowHandle
