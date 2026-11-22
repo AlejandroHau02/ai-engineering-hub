@@ -12,8 +12,10 @@
 //!   outside the resource directory;
 //! * opens every file allowing only shared *reads* and hashes it through that
 //!   same handle. The handles stay open in [`Pinned`] until the child process
-//!   has exited, so the verified bytes are the executed bytes (no swap between
-//!   check and use; writers and deleters are refused by the OS meanwhile).
+//!   has exited: verified files cannot be modified, replaced or deleted
+//!   meanwhile. New files created after the second enumeration are not
+//!   prevented (an actor with the user's rights can also replace the exe);
+//!   see ADR-0009 for this residual risk.
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

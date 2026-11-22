@@ -934,6 +934,7 @@
       meta: (at, seconds) => `Último diagnóstico: ${formatTime(at)}${seconds}.`,
       after() {
         $("upgrade-hint").hidden = !doctorFoundUpgrades();
+        markStale(); // a pending recovery found by Doctor disables Apply
       },
     },
     sincronizacion: {

@@ -131,10 +131,11 @@ async fn apply_sync(
     token: String,
 ) -> Result<CommandRun<ApplyOutcome>, ()> {
     let store = Arc::clone(store.inner());
-    Ok(guarded(
+    let after = Arc::clone(&store);
+    let run = guarded(
         &app,
         move |runtime, env| {
-            // Taken under the run guard: a Busy guard never consumes the token.
+            // Consumed under the run guard.
             APPLYING.store(true, Ordering::SeqCst);
             let outcome = apply::apply(&store, runtime, &token, env);
             APPLYING.store(false, Ordering::SeqCst);
@@ -142,7 +143,13 @@ async fn apply_sync(
         },
         ApplyOutcome::Transport,
     )
-    .await)
+    .await;
+    if let ApplyOutcome::Transport(t) = &run.outcome {
+        if t.code == TransportCode::Busy {
+            after.invalidate(); // any apply attempt ends the authorization
+        }
+    }
+    Ok(run)
 }
 
 fn main() {

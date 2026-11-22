@@ -191,4 +191,7 @@ $expectOk = (-not $ExpectText) -or [bool]$found
   size = "${width}x${height}"
   childProcessesAtCapture = $children
 } | ConvertTo-Json
-if ($poisoned -or -not $expectOk) { exit 1 }
+# Throw (not `exit 1`): a later native call in the same CI step would reset
+# $LASTEXITCODE and hide the failure.
+if ($poisoned) { throw "poisoned module was imported" }
+if (-not $expectOk) { throw "expected text not rendered: $ExpectText" }

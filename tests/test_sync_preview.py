@@ -202,9 +202,6 @@ class PreviewIsReadOnlyTests(unittest.TestCase):
         self.assertTrue(result["violations"], "the audit hook must observe real writes")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 @unittest.skipUnless(os.name == "nt", "read-only files block replace/unlink only on Windows")
 class FailedApplyRollbackTests(unittest.TestCase):
@@ -235,3 +232,7 @@ class FailedApplyRollbackTests(unittest.TestCase):
             self.assertEqual(instructions.read_text(encoding="utf-8"), "# Personal\n")
             # No temporary file, backup or workspace is left behind.
             self.assertEqual(after, before)
+
+
+if __name__ == "__main__":
+    unittest.main()

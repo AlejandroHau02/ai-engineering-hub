@@ -387,11 +387,12 @@ pub fn execute(
             }
             Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(error) => {
+                // The process was started: its effects are unknown.
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(Transport::new(
-                    TransportCode::SpawnFailed,
-                    error.to_string(),
+                    TransportCode::ProcessFailed,
+                    format!("lost track of the running process: {error}"),
                     None,
                 ));
             }

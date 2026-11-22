@@ -224,10 +224,13 @@ pub fn recovery_command(runtime: &Runtime) -> String {
         .and_then(|p| p.parent())
         .map(|root| root.join("syncode").join("scripts").join("sync.py"))
         .unwrap_or_default();
+    // Single-quoted PowerShell literals: `$` and backticks in the install
+    // path are not expanded; embedded single quotes are doubled.
+    let quote = |p: &std::path::Path| format!("'{}'", p.display().to_string().replace('\'', "''"));
     format!(
-        "& \"{}\" -I -B \"{}\" --recover",
-        runtime.python.display(),
-        script.display()
+        "& {} -I -B {} --recover",
+        quote(&runtime.python),
+        quote(&script)
     )
 }
 
@@ -397,6 +400,11 @@ pub fn classify(pending: &Pending, exited: &Exited, recovery: &str) -> ApplyOutc
             unknown("lock-busy with an unexpected transaction outcome")
         };
     }
+    if error_code == "stale-plan" && outcome == "not-started" {
+        // The early check runs outside the lock; a workspace seen afterwards
+        // may belong to a concurrent apply, so this is never "recover".
+        return ApplyOutcome::Stale;
+    }
     let recovery_command = recovery.to_string();
     match (outcome, recovery_required) {
         ("committed", Some(cleanup_pending)) => ApplyOutcome::AppliedWithError {
@@ -413,7 +421,6 @@ pub fn classify(pending: &Pending, exited: &Exited, recovery: &str) -> ApplyOutc
                 recovery_command,
             }
         }
-        ("not-started", Some(false)) if error_code == "stale-plan" => ApplyOutcome::Stale,
         ("not-started" | "rolled-back", Some(false)) => ApplyOutcome::Rejected {
             code: error_code.to_string(),
             message,
@@ -657,6 +664,11 @@ mod tests {
             (
                 1,
                 body("error", Some("stale-plan"), "not-started", json!(false)),
+                "stale",
+            ),
+            (
+                1,
+                body("error", Some("stale-plan"), "not-started", json!(true)),
                 "stale",
             ),
             (
