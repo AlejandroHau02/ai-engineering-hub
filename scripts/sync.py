@@ -14,13 +14,12 @@ import os
 from pathlib import Path
 import shutil
 import stat
-import sys
 import tempfile
 
 from specialists import files_for_target
 from approved_installer import approved_candidates
 from cli_contract import (
-    ArgumentContractError, ContractArgumentParser, SyncodeError, emit_json, envelope,
+    ArgumentContractError, ContractArgumentParser, SyncodeError, diagnostic, emit_json, envelope,
     error_object, resolve_home, wants_json,
 )
 from path_safety import is_link_or_reparse
@@ -246,7 +245,7 @@ def _run_operation(args, home: Path, targets: tuple[str, ...], report: Transacti
         # may be partially applied.
         if _workspace_present(home):
             report.outcome = "recovery-pending"
-        recovered = recover(home, ensure_safe)
+        recovered = recover(home, ensure_safe, report)
         report.outcome = recovered or "not-started"
         print("RECOVERED" if recovered else "NO PENDING TRANSACTION")
         return "recovered" if recovered else "no-pending-transaction"
@@ -333,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, ValueError, ArgumentContractError) as failure:
         error = failure
         if not json_mode:
-            print(f"ERROR: {failure}", file=sys.stderr)
+            diagnostic(f"ERROR: {failure}")
     except KeyboardInterrupt as failure:
         if not json_mode:
             raise
@@ -342,8 +341,8 @@ def main(argv: list[str] | None = None) -> int:
         if not json_mode:
             raise
         error = failure
-        print(f"ERROR: unexpected {type(failure).__name__}; rerun without --format json "
-              "for a traceback", file=sys.stderr)
+        diagnostic(f"ERROR: unexpected {type(failure).__name__}; rerun without --format json "
+              "for a traceback")
 
     if json_mode:
         if error is not None:

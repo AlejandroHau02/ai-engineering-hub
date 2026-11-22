@@ -8,10 +8,9 @@ from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
 from secrets import token_hex
-import sys
 
 from cli_contract import (
-    ArgumentContractError, ContractArgumentParser, SyncodeError, emit_json, envelope,
+    ArgumentContractError, ContractArgumentParser, SyncodeError, diagnostic, emit_json, envelope,
     error_object, resolve_home, wants_json,
 )
 from path_safety import is_link_or_reparse
@@ -166,8 +165,8 @@ def main(argv: list[str] | None = None) -> int:
         if not json_mode:
             raise
         error = exc
-        print(f"ERROR: unexpected {type(exc).__name__}; rerun without --format json "
-              "for a traceback", file=sys.stderr)
+        diagnostic(f"ERROR: unexpected {type(exc).__name__}; rerun without --format json "
+              "for a traceback")
     if error is not None:
         status = "error"
 
@@ -181,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             error=None if error is None else error_object(error),
         ))
     elif error is not None:
-        print(f"ERROR: {error}", file=sys.stderr)
+        diagnostic(f"ERROR: {error}")
     elif status == "planned":
         print(f"DRY-RUN REMOVE {home / candidate.relative}")
         print("Preview only; nothing changed. Use --apply after review.")

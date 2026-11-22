@@ -357,13 +357,6 @@ def _cleanup_with_retry(directory: Path) -> None:
         _cleanup(directory)
 
 
-def _journal_state(directory: Path, home: Path, ensure_safe) -> str | None:
-    try:
-        return _read_journal(directory, home, ensure_safe)["state"]
-    except Exception:
-        return None
-
-
 def _is_empty_workspace(directory: Path) -> bool:
     """No journal and nothing but an unpublished journal temp file.
 
@@ -405,23 +398,53 @@ def _restore_bytes(destination: Path, raw: bytes, mode: int, home: Path, ensure_
             temp_name.unlink()
 
 
-def _rollback(directory: Path, home: Path, ensure_safe) -> str:
-    """Finish or revert a journaled transaction; return its destination outcome."""
+_CLEANUP_FAILED_MESSAGES = {
+    "committed": "Changes were committed and verified, but",
+    "rolled-back": "Changes were rolled back, but",
+    "not-started": "No destination was modified, but",
+    "unknown": "No destination was modified by this recovery, but",
+}
+
+
+def _finish(directory: Path, outcome: str, report: TransactionReport) -> str:
+    """Record a terminal outcome first, then remove the workspace.
+
+    The outcome survives a cleanup failure (including a failed final rmdir
+    after the journal was deleted): the caller always learns whether the batch
+    was committed or rolled back, with an explicit ``cleanup-failed`` error.
+    """
+    report.outcome = outcome
+    try:
+        _cleanup_with_retry(directory)
+    except Exception as cleanup_error:
+        raise TransactionError(
+            f"{_CLEANUP_FAILED_MESSAGES[outcome]} the transaction workspace could not be "
+            f"removed ({_describe(cleanup_error)}). Do not re-apply; run "
+            "sync.py --recover to finish cleanup.",
+            code="cleanup-failed",
+        ) from cleanup_error
+    return outcome
+
+
+def _rollback(directory: Path, home: Path, ensure_safe,
+              report: TransactionReport | None = None) -> str:
+    """Finish or revert a journaled transaction; return its destination outcome.
+
+    ``report.outcome`` is updated as soon as the outcome is known, so it stays
+    accurate when cleanup (or anything after it) raises.
+    """
+    report = report if report is not None else TransactionReport()
     ensure_safe(directory / JOURNAL, home)
     if _is_empty_workspace(directory):
-        _cleanup(directory)
-        return "unknown"
+        return _finish(directory, "unknown", report)
     data = _read_journal(directory, home, ensure_safe)
     if data["state"] == "committed":
         # Already past the commit point: never revert, only finish cleanup.
-        _cleanup(directory)
-        return "committed"
+        return _finish(directory, "committed", report)
     if data["state"] == "preparing":
-        _cleanup(directory)
-        return "not-started"
+        return _finish(directory, "not-started", report)
     if data["state"] == "rolled-back":
-        _cleanup(directory)
-        return "rolled-back"
+        return _finish(directory, "rolled-back", report)
 
     # Verify every destination/snapshot/backup before reverting ANY files.
     # Never overwrite user modifications or act on tampered journal paths.
@@ -487,17 +510,17 @@ def _rollback(directory: Path, home: Path, ensure_safe) -> str:
     # midway, --recover finishes it instead of failing on missing snapshots.
     data["state"] = "rolled-back"
     _save_journal(directory, data)
-    _cleanup(directory)
-    return "rolled-back"
+    return _finish(directory, "rolled-back", report)
 
 
-def recover(home: Path, ensure_safe) -> str | None:
+def recover(home: Path, ensure_safe, report: TransactionReport | None = None) -> str | None:
     """Explicit recovery; refuse concurrent installation and unknown modifications.
 
     Return None when there is nothing to recover, otherwise the outcome of the
     recovered transaction ("rolled-back", "committed", "not-started" or
     "unknown" for an empty, journal-less workspace). The
-    result keeps the truthiness of the former bool return value.
+    result keeps the truthiness of the former bool return value. When it
+    raises, ``report.outcome`` keeps any terminal outcome already reached.
     """
     directory = home / WORK_DIR
     ensure_safe(directory / JOURNAL, home)
@@ -508,7 +531,7 @@ def recover(home: Path, ensure_safe) -> str | None:
         ensure_safe(directory / JOURNAL, home)
         if not directory.exists():
             return None
-        return _rollback(directory, home, ensure_safe)
+        return _rollback(directory, home, ensure_safe, report)
 
 
 def apply_transaction(changes, home: Path, verify_change, write_change, ensure_safe,
@@ -614,31 +637,24 @@ def _apply_transaction_locked(changes, home: Path, verify_change, write_change, 
                     code="cleanup-failed",
                 ) from original
             raise
-        if phase == "pending" and _journal_state(directory, home, ensure_safe) == "committed":
-            # The committed journal was atomically recorded before the error
-            # (e.g. a directory fsync failed): the commit point was reached.
-            report.outcome = "committed"
-            try:
-                _cleanup_with_retry(directory)
-            except Exception as cleanup_error:
-                if not isinstance(original, Exception):
-                    raise original from cleanup_error
-                raise _cleanup_failed(cleanup_error) from original
-            raise
         # Preparation cannot have touched target files; after "pending" the
         # destinations may be partially written until rollback succeeds.
+        # _rollback re-reads the journal: if the committed journal was already
+        # recorded (e.g. a directory fsync failed after the atomic replace),
+        # it reports "committed" and never reverts.
         report.outcome = "recovery-pending" if phase == "pending" else "not-started"
         try:
-            report.outcome = _rollback(directory, home, ensure_safe)
+            _rollback(directory, home, ensure_safe, report)
         except Exception as rollback_error:
-            if _journal_state(directory, home, ensure_safe) == "rolled-back":
-                report.outcome = "rolled-back"
-                if not isinstance(original, Exception):
-                    raise original from rollback_error
+            if not isinstance(original, Exception):
+                # Defect fix: an interrupt must stay an interrupt (exit 130)
+                # even when rollback or its cleanup fails; report.outcome and
+                # the preserved journal carry the recovery state.
+                raise original from rollback_error
+            if getattr(rollback_error, "code", None) == "cleanup-failed":
+                # Terminal outcome already recorded; keep the original cause.
                 raise TransactionError(
-                    f"Install failed ({type(original).__name__}) and was rolled back, "
-                    "but the transaction workspace could not be removed "
-                    f"({_describe(rollback_error)}). Run sync.py --recover to finish cleanup.",
+                    f"Install failed ({type(original).__name__}). {rollback_error}",
                     code="cleanup-failed",
                 ) from original
             raise TransactionError(
@@ -652,17 +668,4 @@ def _apply_transaction_locked(changes, home: Path, verify_change, write_change, 
     # Past the commit point: destinations and backups are final. Never roll
     # back. Retry the workspace removal once (transient Windows file locks);
     # otherwise report the committed state with an explicit cleanup error.
-    report.outcome = "committed"
-    try:
-        _cleanup_with_retry(directory)
-    except Exception as cleanup_error:
-        raise _cleanup_failed(cleanup_error) from cleanup_error
-
-
-def _cleanup_failed(cleanup_error: BaseException) -> TransactionError:
-    return TransactionError(
-        "Changes were committed and verified, but the transaction workspace "
-        f"could not be removed ({_describe(cleanup_error)}). Do not re-apply; run "
-        "sync.py --recover to finish cleanup.",
-        code="cleanup-failed",
-    )
+    _finish(directory, "committed", report)

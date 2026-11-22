@@ -5,10 +5,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
-import sys
 
 from cli_contract import (
-    ArgumentContractError, ContractArgumentParser, SCHEMA_VERSION, PRODUCT, emit_json,
+    ArgumentContractError, ContractArgumentParser, SCHEMA_VERSION, PRODUCT, diagnostic, emit_json,
     error_object, resolve_home, wants_json,
 )
 from specialists import files_for_target
@@ -165,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         if json_mode:
             emit_json(_error_response(error, home, targets))
         else:
-            print(f"ERROR: {error}", file=sys.stderr)
+            diagnostic(f"ERROR: {error}")
         return 1
     except KeyboardInterrupt as error:
         if not json_mode:
@@ -175,8 +174,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:  # noqa: BLE001 - contract boundary
         if not json_mode:
             raise
-        print(f"ERROR: unexpected {type(error).__name__}; rerun without --format json "
-              "for a traceback", file=sys.stderr)
+        diagnostic(f"ERROR: unexpected {type(error).__name__}; rerun without --format json "
+              "for a traceback")
         emit_json(_error_response(error, home, targets))
         return 1
     if json_mode:

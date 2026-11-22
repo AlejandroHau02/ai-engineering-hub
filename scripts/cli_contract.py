@@ -177,15 +177,51 @@ def emit_json(payload: dict) -> None:
             sys.stdout.write(raw.decode("ascii"))
             sys.stdout.flush()
     except OSError:
-        devnull = None
-        try:
-            devnull = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull, sys.stdout.fileno())
-        except (OSError, ValueError, AttributeError):
-            pass
-        finally:
-            if devnull is not None:
-                os.close(devnull)
+        _redirect_to_devnull(sys.stdout, 1)
+
+
+def _redirect_to_devnull(stream, expected_fd: int) -> None:
+    """Point a failed standard stream's descriptor at devnull.
+
+    Data left in its buffer then flushes harmlessly at interpreter shutdown;
+    otherwise CPython reports the failed final flush and exits with 120,
+    overriding the exit code already decided by the command. Only the
+    standard descriptor itself (1 or 2) is ever replaced, so a stream object
+    bound to some other, possibly reused descriptor (e.g. the lock file) is
+    never clobbered.
+    """
+    devnull = None
+    try:
+        if stream.fileno() != expected_fd:
+            return
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, expected_fd)
+    except (OSError, ValueError, AttributeError):
+        pass
+    finally:
+        if devnull is not None:
+            os.close(devnull)
+
+
+def diagnostic(message: str) -> None:
+    """Best-effort human diagnostic on stderr; never raises.
+
+    stderr is outside the contract: a closed, broken or missing stderr must not
+    prevent the JSON response on stdout or change the exit code. Never falls
+    back to stdout (``print(file=None)`` would corrupt the JSON stream).
+    """
+    stream = sys.stderr
+    if stream is None:
+        return
+    try:
+        stream.write(message + "\n")
+        stream.flush()
+    except UnicodeError:
+        pass  # this message is unencodable; the stream itself is healthy
+    except (OSError, ValueError):  # broken pipe / EINVAL / closed file
+        _redirect_to_devnull(stream, 2)
+    except (AttributeError, TypeError):
+        pass  # stderr replaced by a non-stream object
 
 
 def resolve_home(value: Path | None) -> Path:

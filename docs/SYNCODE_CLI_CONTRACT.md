@@ -4,12 +4,12 @@ La aplicación de escritorio podrá consultar los scripts actuales sin crear un 
 
 ## Reglas comunes del modo JSON (`--format json`)
 
-- **Un único objeto por invocación** en stdout, seguido de un salto de línea. stderr no forma parte del contrato.
+- **Un único objeto por invocación** en stdout, seguido de un salto de línea. stderr no forma parte del contrato y es **de mejor esfuerzo**: si está cerrado, roto o ausente, los diagnósticos se descartan sin impedir el JSON ni alterar el código de salida (el descriptor se redirige a devnull para que el cierre del intérprete no lo cambie). Nunca se escriben diagnósticos en stdout.
 - **Codificación independiente de la configuración regional:** el JSON se escribe como bytes **ASCII** (subconjunto válido de UTF-8); todo carácter no ASCII se escapa como `\uXXXX`. Un parser JSON obtiene las cadenas originales (por ejemplo, un home `C:\Users\测试`) con cualquier página de códigos de la consola o del pipe. Un home con surrogates UTF-16 sueltos se representa con escapes `\udXXX`; algunos parsers estrictos los rechazan.
 - **Errores de argumentos:** también producen JSON (`error.code: "invalid-arguments"`, exit `1`). Se detecta `--format json`, `--format=json` y sus abreviaturas válidas para argparse. Si no se pidió JSON, argparse conserva su comportamiento histórico: uso en stderr y exit `2`.
 - **Errores inesperados** (excepciones no previstas por el contrato): JSON con `code: "internal-error"` y un mensaje genérico; **nunca** se incluye el texto de la excepción. En stderr se indica el tipo y cómo obtener el traceback (modo texto).
 - **`--help`** imprime ayuda en texto y sale con `0`; no forma parte del contrato JSON y un cliente no debe invocarlo.
-- **Interrupción** (`Ctrl+C`/`KeyboardInterrupt`): JSON con `code: "interrupted"` y exit `130`, tras el rollback que corresponda. Si el proceso se termina abruptamente (TerminateProcess/SIGKILL) no hay JSON: **ausencia de JSON significa estado desconocido**; el cliente debe ejecutar Doctor, nunca suponer que la operación no empezó.
+- **Interrupción** (`Ctrl+C`/`KeyboardInterrupt`): JSON con `code: "interrupted"` y exit `130`, tras el rollback que corresponda. Si el rollback también falla, la interrupción se conserva igualmente (`interrupted`, `130`) con `outcome: recovery-pending`, `recoveryRequired: true` y el journal preservado para `--recover`. Si el proceso se termina abruptamente (TerminateProcess/SIGKILL) no hay JSON: **ausencia de JSON significa estado desconocido**; el cliente debe ejecutar Doctor, nunca suponer que la operación no empezó.
 - `message` es texto para personas: puede contener **rutas locales absolutas** y no debe interpretarse ni enviarse a terceros. `type` es informativo. **La lógica del cliente depende de `code`.**
 
 ### Objeto `error` (sync y remove)
@@ -100,9 +100,9 @@ No instala ni actualiza nada. Respuesta JSON:
 - `status: error`, `rolled-back`, `false`: fallo ordinario con rollback completo.
 - `status: error`, `rolled-back`, `true`, `cleanup-failed`: rollback completo; solo falta limpiar el workspace con `--recover`.
 - `status: error`, `recovery-pending`, `true`, `recovery-required`: rollback incompleto.
-- `status: error`, `not-started`, `true`: no se escribió ningún destino, pero quedó un workspace (`transaction-pending`; `cleanup-failed` antes del primer journal; o `recovery-required` si falló la limpieza de un journal en preparación).
+- `status: error`, `not-started`, `true`: no se escribió ningún destino, pero quedó un workspace (`transaction-pending`, o `cleanup-failed` si falló la limpieza antes del primer journal o la de un journal en preparación).
 
-Con `--recover`, `outcome` indica cómo terminó **la transacción recuperada**: `rolled-back` (se restauró un lote pendiente), `committed` (el lote ya estaba completo y solo se limpió el workspace), `not-started` (se descartó un journal en preparación, o no había nada que recuperar) o `unknown` (workspace vacío). Un workspace sin journal que contenga cualquier otro archivo **no se elimina**: `recovery-blocked`. Si la recuperación se rechaza, `outcome` es `recovery-pending`.
+Con `--recover`, `outcome` indica cómo terminó **la transacción recuperada**: `rolled-back` (se restauró un lote pendiente), `committed` (el lote ya estaba completo y solo se limpió el workspace), `not-started` (se descartó un journal en preparación, o no había nada que recuperar) o `unknown` (workspace vacío). Un workspace sin journal que contenga cualquier otro archivo **no se elimina**: `recovery-blocked`. Si la recuperación se rechaza, `outcome` es `recovery-pending`. Si la recuperación alcanza un resultado terminal y solo falla la limpieza (incluido el `rmdir` final después de borrar el journal), `outcome` **conserva ese resultado** (`committed`, `rolled-back`, `not-started` o `unknown`) con `error.code: "cleanup-failed"`; un nuevo `--recover` termina la limpieza.
 
 La limpieza elimina el journal **en último lugar**: una limpieza interrumpida deja el journal (recuperable) o un directorio vacío, nunca datos de recuperación huérfanos.
 
