@@ -10,6 +10,7 @@ concurrent local filesystem mutation; those limitations are documented.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -24,6 +25,8 @@ from secrets import token_hex
 from path_safety import is_link_or_reparse
 
 WORK_DIR = ".ai-engineering-hub-transaction"
+LOCK_FILE = ".ai-engineering-hub.sync.lock"
+LOCK_MARKER = b"AI_ENGINEERING_HUB_SYNC_LOCK_v1\n"
 JOURNAL = "journal.json"
 MAX_JOURNAL_BYTES = 1024 * 1024
 MAX_FILES = 300
@@ -40,6 +43,65 @@ class TransactionError(ValueError):
 
 def _sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+@contextmanager
+def exclusive_home_lock(home: Path, ensure_safe):
+    """Serialize applying and recovering across independent Python processes.
+
+    Keep a fixed, validated lock file in home so a process killed mid-write
+    releases its OS advisory lock automatically. Never unlink the lock path:
+    unlinking could let two processes lock different inodes.
+    """
+    lock_path = home / LOCK_FILE
+    ensure_safe(lock_path, home)
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    # This file deliberately persists, including after a clean installation.
+    fd = os.open(lock_path, flags, 0o600)
+    acquired = False
+    try:
+        ensure_safe(lock_path, home)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise TransactionError("Installation lock is not a regular file")
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError:
+                raise TransactionError(
+                    "Another installation/recovery is active; do not recover concurrently"
+                ) from None
+        else:
+            import fcntl
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                raise TransactionError(
+                    "Another installation/recovery is active; do not recover concurrently"
+                ) from None
+        acquired = True
+        size = os.fstat(fd).st_size
+        if size == 0:
+            os.write(fd, LOCK_MARKER)
+            os.fsync(fd)
+        else:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if os.read(fd, len(LOCK_MARKER) + 1) != LOCK_MARKER:
+                raise TransactionError(
+                    f"Unexpected existing installation lock contents: {lock_path}"
+                )
+        yield
+    finally:
+        if acquired:
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def _flush_parent(directory: Path) -> None:
@@ -305,16 +367,29 @@ def _rollback(directory: Path, home: Path, ensure_safe) -> None:
 
 
 def recover(home: Path, ensure_safe) -> bool:
-    """Explicit recovery, never silently overwrite unknown local modifications."""
+    """Explicit recovery; refuse concurrent installation and unknown modifications."""
     directory = home / WORK_DIR
     ensure_safe(directory / JOURNAL, home)
     if not directory.exists():
         return False
-    _rollback(directory, home, ensure_safe)
+    with exclusive_home_lock(home, ensure_safe):
+        # Recheck after acquiring the process-wide lock.
+        ensure_safe(directory / JOURNAL, home)
+        if not directory.exists():
+            return False
+        _rollback(directory, home, ensure_safe)
     return True
 
 
 def apply_transaction(changes, home: Path, verify_change, write_change, ensure_safe) -> None:
+    """Exclusive, crash-recoverable application of an approved batch."""
+    if not changes:
+        return
+    with exclusive_home_lock(home, ensure_safe):
+        _apply_transaction_locked(changes, home, verify_change, write_change, ensure_safe)
+
+
+def _apply_transaction_locked(changes, home: Path, verify_change, write_change, ensure_safe):
     """Stage preimages first; write, then commit or revert the entire batch."""
     if not changes:
         return
