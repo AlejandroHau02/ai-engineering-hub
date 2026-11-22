@@ -10,7 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from skill_registry import RegistryError, validate_entry  # noqa: E402
+from skill_registry import OWN_SKILLS, RegistryError, validate_entry  # noqa: E402
 from skill_scout import frontmatter  # noqa: E402
 from sync import SKILLS  # noqa: E402
 
@@ -34,6 +34,8 @@ class AppSecSkillTests(unittest.TestCase):
     def test_registered_as_fifth_first_party_skill(self):
         self.assertEqual(len(SKILLS), 5)
         self.assertEqual(SKILLS.count(SKILL_ID), 1)
+        self.assertEqual(set(SKILLS), set(OWN_SKILLS),
+                         "Registry collision guard must cover all installable Hub skills")
         self.assertEqual(frontmatter(SOURCE.read_text(encoding="utf-8"))["name"],
                          SKILL_ID)
 
@@ -87,6 +89,33 @@ class AppSecSkillTests(unittest.TestCase):
         second = self.run_sync("--target", "both")
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("NO CHANGES", second.stdout)
+
+    def test_preexisting_appsec_folder_without_skill_md_is_protected(self):
+        for root in (".claude", ".agents"):
+            with self.subTest(root=root):
+                home = self.home / root.removeprefix(".")
+                home.mkdir()
+                skill_dir = home / root / "skills" / SKILL_ID
+                skill_dir.mkdir(parents=True)
+                user_file = skill_dir / "personal-notes.md"
+                user_file.write_text("my personal security instructions", encoding="utf-8")
+                result = self.run_sync("--target", "both", "--apply", "--home", str(home))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("First-party skill directory already exists", result.stderr)
+                self.assertEqual(user_file.read_text(encoding="utf-8"),
+                                 "my personal security instructions")
+                self.assertFalse((skill_dir / "SKILL.md").exists())
+                self.assertFalse((home / ".claude/CLAUDE.md").exists())
+                self.assertFalse((home / ".codex/AGENTS.md").exists())
+
+    def test_preexisting_empty_skill_folder_is_not_claimed(self):
+        skill_dir = self.home / ".claude/skills" / SKILL_ID
+        skill_dir.mkdir(parents=True)
+        result = self.run_sync("--target", "claude", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("First-party skill directory already exists", result.stderr)
+        self.assertFalse((skill_dir / "SKILL.md").exists())
+        self.assertFalse((self.home / ".claude/CLAUDE.md").exists())
 
     def test_custom_existing_appsec_skill_aborts_without_overwrite(self):
         dest = self.home / ".claude/skills" / SKILL_ID / "SKILL.md"
