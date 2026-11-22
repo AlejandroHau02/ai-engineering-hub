@@ -46,7 +46,7 @@ def _candidate(args) -> Candidate:
     if args.skill:
         if args.skill not in SKILLS:
             raise ValueError("Unknown first-party skill")
-        expected = (ROOT / "skills" / args.skill / "SKILL.md").read_bytes()
+        expected = (ROOT / "skills" / args.skill / "SKILL.md").read_text(encoding="utf-8").encode("utf-8")
         return Candidate(root / args.skill / "SKILL.md", _sha(expected), True)
 
     # Optional third-party removal uses only the pre-approved pinned digest.
