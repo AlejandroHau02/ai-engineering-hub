@@ -59,6 +59,9 @@ class RemoveTests(unittest.TestCase):
         self.assertEqual(doc["status"], "removed")
         backup = self.home / doc["backup"]
         self.assertTrue(backup.is_dir())
+        self.assertEqual(backup.parent, self.home / ".claude",
+                         "Removed skill must leave the recursive discovery root")
+        self.assertFalse(backup.is_relative_to(self.home / ".claude/skills"))
         self.assertEqual((backup / "SKILL.md").read_bytes(), original)
         self.assertFalse(target.exists())
         self.assertTrue((self.home / ".agents/skills/code-review/SKILL.md").exists())
@@ -76,6 +79,8 @@ class RemoveTests(unittest.TestCase):
         doc = json.loads(result.stdout)
         self.assertEqual(doc["status"], "removed")
         backup = self.home / doc["backup"]
+        self.assertEqual(backup.parent, self.home / ".codex",
+                         "Removed agent must leave the native agents directory")
         self.assertEqual(backup.read_bytes(), original)
         self.assertFalse(target.exists())
         self.assertTrue((self.home / ".claude/agents/hub-code-reviewer.md").exists())
@@ -91,7 +96,7 @@ class RemoveTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Modified or unrecognized", result.stderr)
         self.assertEqual(path.read_text(), "My own skill")
-        self.assertEqual(list(path.parent.parent.glob("code-review.removed.*")), [])
+        self.assertEqual(list((self.home / ".claude").glob("skills-code-review.removed.*")), [])
 
     def test_extra_files_in_skill_directory_prevent_removal(self):
         self.install("--target", "claude")
