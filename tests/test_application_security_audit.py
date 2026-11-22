@@ -56,7 +56,7 @@ class AppSecSkillTests(unittest.TestCase):
 
     def test_cannot_shadow_new_first_party_skill_as_external(self):
         with self.assertRaisesRegex(RegistryError, "shadow"):
-            validate_entry({"id": SKILL_ID})
+            validate_entry({"id": SKILL_ID, "source": {}, "assessment": {}, "approval": {}})
 
     def test_dry_run_proposes_new_skill_for_both_clients_without_writes(self):
         result = self.run_sync("--target", "both")
