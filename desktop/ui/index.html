@@ -17,30 +17,71 @@
       <span class="wordmark">SYNCODE</span>
       <span class="tagline">Un mismo criterio. Diferentes inteligencias.</span>
     </div>
+    <nav class="sections" aria-label="Secciones">
+      <a href="#diagnostico" data-screen="diagnostico">Diagnóstico</a>
+      <a href="#sincronizacion" data-screen="sincronizacion">Sincronización</a>
+    </nav>
+    <label class="toggle"><input type="checkbox" id="show-paths"> Mostrar rutas completas</label>
   </header>
 
-  <main id="main">
-    <div class="page-head">
-      <div>
-        <h1>Diagnóstico</h1>
-        <p class="lede">Estado de SYNCODE en este equipo para Claude Code y Codex. Solo lectura: no modifica archivos ni ejecuta agentes.</p>
-      </div>
-      <div class="toolbar">
-        <button type="button" id="run" class="primary">Volver a diagnosticar</button>
-        <label class="toggle"><input type="checkbox" id="show-paths"> Mostrar rutas completas</label>
-      </div>
-    </div>
-    <p class="meta" id="meta"></p>
+  <div id="live" class="sr-only" role="status" aria-live="polite"></div>
 
-    <div id="live" class="sr-only" role="status" aria-live="polite"></div>
-    <div id="result" aria-busy="true">
-      <section class="panel loading" aria-label="Diagnóstico en curso">
-        <span class="spinner" aria-hidden="true"></span>
-        <p>Diagnosticando…</p>
-      </section>
-    </div>
+  <main id="main">
+    <section class="screen" id="screen-diagnostico" aria-labelledby="diag-h1">
+      <div class="page-head">
+        <div>
+          <h1 id="diag-h1" tabindex="-1">Diagnóstico</h1>
+          <p class="lede">Estado de SYNCODE en este equipo para Claude Code y Codex. Solo lectura: no modifica archivos ni ejecuta agentes.</p>
+        </div>
+        <button type="button" id="diag-run" class="primary">Volver a diagnosticar</button>
+      </div>
+      <p class="meta" id="diag-meta"></p>
+      <div id="diag-result" aria-busy="true">
+        <section class="panel loading" aria-label="Diagnóstico en curso">
+          <span class="spinner" aria-hidden="true"></span>
+          <p>Diagnosticando…</p>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen" id="screen-sincronizacion" aria-labelledby="sync-h1" hidden>
+      <div class="page-head">
+        <div>
+          <h1 id="sync-h1" tabindex="-1">Sincronización</h1>
+          <p class="lede">Vista previa calculada por el planificador real de SYNCODE: muestra qué cambiaría en tu configuración global. No escribe archivos.</p>
+        </div>
+      </div>
+
+      <form id="sync-form" class="panel options" novalidate>
+        <fieldset>
+          <legend>Objetivo</legend>
+          <label><input type="radio" name="target" value="both" checked> Claude Code y Codex</label>
+          <label><input type="radio" name="target" value="claude"> Solo Claude Code</label>
+          <label><input type="radio" name="target" value="codex"> Solo Codex</label>
+        </fieldset>
+        <fieldset>
+          <legend>Alcance</legend>
+          <label><input type="checkbox" name="specialists" id="opt-specialists"> Incluir especialistas
+            <span class="hint">Definiciones de agentes de revisión y asesoría.</span></label>
+          <label><input type="checkbox" name="upgradeSkills" id="opt-upgrade"> Previsualizar actualizaciones de skills v0.1
+            <span class="hint">Solo skills idénticas a la versión v0.1 reconocida; las modificadas nunca se sobrescriben.</span>
+            <span class="hint notice" id="upgrade-hint" hidden>Diagnóstico detectó skills con actualización disponible.</span></label>
+        </fieldset>
+        <div class="form-actions">
+          <button type="submit" id="sync-run" class="primary">Generar vista previa</button>
+        </div>
+      </form>
+
+      <p class="meta" id="sync-meta"></p>
+      <div id="sync-result" aria-busy="false">
+        <section class="panel intro">
+          <h2>Antes de sincronizar, revisa</h2>
+          <p>Elige el objetivo y el alcance y genera la vista previa. Verás cada archivo que se crearía o actualizaría, agrupado por cliente. Esta versión no aplica cambios.</p>
+        </section>
+      </div>
+    </section>
   </main>
 
-  <footer class="appfoot" id="foot">SYNCODE Desktop · prototipo Fase 1</footer>
+  <footer class="appfoot" id="foot">SYNCODE Desktop</footer>
 </body>
 </html>

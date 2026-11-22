@@ -28,7 +28,11 @@ jobs:
   desktop-windows:
     name: Desktop (Windows, Tauri + embedded Python)
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write       # build provenance attestation (push only)
+      attestations: write
     env:
       TAURI_CLI_VERSION: "2.12.6"
     defaults:
@@ -49,12 +53,14 @@ jobs:
             ~/.cargo/bin/cargo-tauri.exe
             desktop/src-tauri/target
           key: desktop-${{ runner.os }}-cli${{ env.TAURI_CLI_VERSION }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
-      - name: Stage embedded runtime (pinned SHA-256)
+      - name: Snapshot managed global paths (before)
+        run: python desktop/scripts/home_snapshot.py take "$env:RUNNER_TEMP/home-before.json"
+      - name: Stage embedded runtime (pinned SHA-256, clean tree)
         run: python desktop/scripts/stage_runtime.py
-      - name: Runtime isolation smoke and staging tests
+      - name: Runtime isolation smoke and desktop Python tests
         run: |
           python -I desktop/scripts/smoke_runtime.py
-          python -m unittest tests.test_desktop_runtime -v
+          python -m unittest tests.test_desktop_runtime tests.test_desktop_portable tests.test_sync_preview -v
       - name: Rust tests
         working-directory: desktop/src-tauri
         run: cargo test --locked
@@ -62,20 +68,66 @@ jobs:
         run: |
           $have = if (Get-Command cargo-tauri -ErrorAction SilentlyContinue) { (cargo tauri --version) -replace '^tauri-cli ', '' }
           if ($have -ne $env:TAURI_CLI_VERSION) { cargo install tauri-cli --version "=$env:TAURI_CLI_VERSION" --locked --force }
-      - name: Build NSIS installer
+      - name: Build release and NSIS installer
         working-directory: desktop/src-tauri
         run: cargo tauri build --ci
-      - name: Install outside the repository and launch
+      - name: Build and verify portable ZIP
+        run: |
+          $dist = Join-Path $env:RUNNER_TEMP 'dist'
+          python desktop/scripts/package_portable.py build --exe desktop/src-tauri/target/release/syncode-desktop.exe --out $dist
+          $zip = Get-ChildItem "$dist/*.zip" | Select-Object -First 1
+          python desktop/scripts/package_portable.py verify $zip.FullName
+          Get-Content "$dist/SHA256SUMS"
+          "PORTABLE_ZIP=$($zip.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Portable ZIP — extracted outside the repository, no global Python
+        run: |
+          $extract = Join-Path $env:RUNNER_TEMP 'portable-test'
+          Expand-Archive $env:PORTABLE_ZIP -DestinationPath $extract
+          $root = Get-ChildItem $extract -Directory | Select-Object -First 1
+          python -I desktop/scripts/smoke_runtime.py --app-root $root.FullName
+          $exe = Join-Path $root.FullName 'syncode-desktop.exe'
+          $ev = Join-Path $env:RUNNER_TEMP 'evidence'
+          $disposable = Join-Path $env:RUNNER_TEMP 'disposable-home'
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe -Out "$ev/portable-diagnostico.png" -Isolated -ExpectText 'Diagnóstico completado'
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe -Out "$ev/portable-sincronizacion.png" -Isolated -Screen sincronizacion -HomeOverride $disposable -ExpectText 'Vista previa: 12 cambios propuestos'
+          if (Get-ChildItem $disposable -Force) { throw 'preview wrote into the disposable home' }
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe -Out "$ev/portable-sincronizacion-home.png" -Isolated -Screen sincronizacion -ExpectText 'Vista previa:'
+      - name: NSIS installer — install outside the repository and launch
         run: |
           $setup = Get-ChildItem desktop/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           $dest = Join-Path $env:RUNNER_TEMP 'SYNCODE-install'
           Start-Process $setup.FullName -ArgumentList '/S', "/D=$dest" -Wait
           $exe = Get-ChildItem $dest -Filter *.exe | Where-Object Name -notlike 'uninstall*' | Select-Object -First 1
-          if (-not (Test-Path "$dest/python/python.exe") -or -not (Test-Path "$dest/syncode/scripts/doctor.py")) { throw 'bundled runtime missing' }
-          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$env:RUNNER_TEMP/evidence/diagnostico.png" -ExpectText 'Diagnóstico completado'
-          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$env:RUNNER_TEMP/evidence/diagnostico-isolated.png" -Isolated -ExpectText 'Diagnóstico completado'
-          Copy-Item $setup.FullName "$env:RUNNER_TEMP/evidence/"
+          if (-not (Test-Path "$dest/python/python.exe") -or -not (Test-Path "$dest/syncode/scripts/sync.py")) { throw 'bundled runtime missing' }
+          $ev = Join-Path $env:RUNNER_TEMP 'evidence'
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$ev/diagnostico.png" -ExpectText 'Diagnóstico completado'
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$ev/sincronizacion.png" -Isolated -Screen sincronizacion -ExpectText 'Vista previa:'
+          Copy-Item $setup.FullName "$ev/"
+      - name: Managed global paths unchanged (after)
+        run: |
+          python desktop/scripts/home_snapshot.py take "$env:RUNNER_TEMP/home-after.json"
+          python desktop/scripts/home_snapshot.py compare "$env:RUNNER_TEMP/home-before.json" "$env:RUNNER_TEMP/home-after.json"
+      - name: Executable load configuration (DLL search hardening)
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          & $dumpbin.FullName /loadconfig desktop/src-tauri/target/release/syncode-desktop.exe | Select-String -Pattern 'Dependent' 
+          & $dumpbin.FullName /dependents desktop/src-tauri/target/release/syncode-desktop.exe | Select-String -Pattern '\.dll'
+      - uses: actions/attest-build-provenance@v2
+        if: github.event_name == 'push'
+        with:
+          subject-path: |
+            ${{ env.PORTABLE_ZIP }}
+            desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
       - uses: actions/upload-artifact@v4
+        with:
+          name: syncode-desktop-portable
+          path: |
+            ${{ runner.temp }}/dist/*.zip
+            ${{ runner.temp }}/dist/SHA256SUMS
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: syncode-desktop-windows
           path: ${{ runner.temp }}/evidence/
