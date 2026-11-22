@@ -24,3 +24,55 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Dry-run preview
         run: python scripts/sync.py --target both --home scratch-home
+
+  desktop-windows:
+    name: Desktop (Windows, Tauri + embedded Python)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal; rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-tauri.exe
+            desktop/src-tauri/target
+          key: desktop-${{ runner.os }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+      - name: Stage embedded runtime (pinned SHA-256)
+        run: python desktop/scripts/stage_runtime.py
+      - name: Runtime isolation smoke and staging tests
+        run: |
+          python -I desktop/scripts/smoke_runtime.py
+          python -m unittest tests.test_desktop_runtime -v
+      - name: Rust tests
+        working-directory: desktop/src-tauri
+        run: cargo test --locked
+      - name: Tauri CLI
+        run: if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) { cargo install tauri-cli --version "=2.12.6" --locked }
+      - name: Build NSIS installer
+        working-directory: desktop/src-tauri
+        run: cargo tauri build --ci
+      - name: Install outside the repository and launch
+        run: |
+          $setup = Get-ChildItem desktop/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $dest = Join-Path $env:RUNNER_TEMP 'SYNCODE-install'
+          Start-Process $setup.FullName -ArgumentList '/S', "/D=$dest" -Wait
+          $exe = Get-ChildItem $dest -Filter *.exe | Where-Object Name -notlike 'uninstall*' | Select-Object -First 1
+          if (-not (Test-Path "$dest/python/python.exe") -or -not (Test-Path "$dest/syncode/scripts/doctor.py")) { throw 'bundled runtime missing' }
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$env:RUNNER_TEMP/evidence/diagnostico.png"
+          ./desktop/scripts/launch_smoke.ps1 -Exe $exe.FullName -Out "$env:RUNNER_TEMP/evidence/diagnostico-isolated.png" -Isolated
+          Copy-Item $setup.FullName "$env:RUNNER_TEMP/evidence/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: syncode-desktop-windows
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 14

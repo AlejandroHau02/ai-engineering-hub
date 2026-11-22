@@ -9,3 +9,9 @@ venv/
 Thumbs.db
 *.bak.*
 scratch-home/
+
+# SYNCODE Desktop build outputs (staged runtime is reproducible via stage_runtime.py)
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/resources/python/
+desktop/src-tauri/resources/syncode/
