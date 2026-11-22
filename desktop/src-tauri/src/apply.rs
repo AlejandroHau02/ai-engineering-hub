@@ -583,10 +583,10 @@ mod tests {
             .unwrap();
         let generation = store.invalidate();
         let second = store
-            .offer(generation, fp('g'), o, "C:\\h", &changes)
+            .offer(generation, fp('0'), o, "C:\\h", &changes)
             .unwrap();
         assert_ne!(first, second);
-        assert_eq!(store.take(&second, PLAN_TTL).unwrap().fingerprint, fp('g'));
+        assert_eq!(store.take(&second, PLAN_TTL).unwrap().fingerprint, fp('0'));
     }
 
     fn pending() -> Pending {
