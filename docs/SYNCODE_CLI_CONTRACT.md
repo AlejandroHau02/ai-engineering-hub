@@ -33,7 +33,7 @@ No instala ni actualiza nada. Respuesta JSON:
 - `events[]`: líneas del registro textual existente capturadas para compatibilidad; son informativas, no un contrato para parsear. Pueden incluir rutas locales de backups.
 - `error`: `null` en éxito o `{type, message}` cuando ocurre una excepción controlada.
 
-El formato es válido también para `--apply` y `--recover`, que **conservan su semántica y permisos anteriores**. La aplicación deberá comprobar `status`, código de salida y `changes` antes de habilitar confirmaciones. Un plan no es un token de autorización ni queda fijado en disco: siempre deben recalcularse los cambios bajo el bloqueo del instalador al aplicar.
+El formato es válido también para `--apply` y `--recover`, que **conservan su semántica y permisos anteriores**. La aplicación deberá comprobar `status`, código de salida y `changes` antes de habilitar confirmaciones. Un plan no es un token de autorización ni queda fijado en disco: cada invocación reconstruye el plan y, durante `--apply`, el instalador vuelve a verificar los destinos bajo un bloqueo exclusivo antes de escribir. **No garantiza que el entorno completo permanezca inmutable entre el dry-run y la aplicación.**
 
 Código de salida: `0` operación completada; `1` error. El modo texto es el predeterminado y conserva sus mensajes anteriores.
 
