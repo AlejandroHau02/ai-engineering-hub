@@ -1,12 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Main window: may only invoke the read-only commands run_doctor and preview_sync. No core plugins, shell, fs or network.",
+  "description": "Main window: read-only run_doctor and preview_sync, plus discard_plan and apply_sync (single-use bound apply). No core plugins, shell, fs or network.",
   "windows": [
     "main"
   ],
   "permissions": [
     "allow-run-doctor",
-    "allow-preview-sync"
+    "allow-preview-sync",
+    "allow-discard-plan",
+    "allow-apply-sync"
   ]
 }

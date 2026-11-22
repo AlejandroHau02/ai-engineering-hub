@@ -1,18 +1,21 @@
 [package]
 name = "syncode-desktop"
-version = "0.2.0"
-description = "SYNCODE Desktop — Doctor and read-only sync preview"
+version = "0.3.0"
+description = "SYNCODE Desktop — Doctor, sync preview and bound apply"
 edition = "2021"
 rust-version = "1.80"
 publish = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+sha2 = "0.10"
 
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Already in the dependency tree (via tauri); no new crates are downloaded.
+sha2 = "0.10"
 
 [profile.release]
 codegen-units = 1

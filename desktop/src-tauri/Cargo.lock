@@ -3196,10 +3196,11 @@ dependencies = [
 
 [[package]]
 name = "syncode-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tauri",
  "tauri-build",
 ]

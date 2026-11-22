@@ -248,7 +248,13 @@ def write_with_backup(change: Change, home: Path, create_backup: bool = True) ->
         os.replace(temp_path, destination)
     finally:
         if temp_path is not None and temp_path.exists():
-            temp_path.unlink()
+            try:
+                temp_path.unlink()
+            except PermissionError:
+                # The destination's read-only mode was copied to the temp file;
+                # on Windows that blocks unlink. Restore write access to remove it.
+                os.chmod(temp_path, stat.S_IREAD | stat.S_IWRITE)
+                temp_path.unlink()
 
 
 def _workspace_present(home: Path) -> bool | None:

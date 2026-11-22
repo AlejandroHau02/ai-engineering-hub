@@ -48,7 +48,7 @@
       <div class="page-head">
         <div>
           <h1 id="sync-h1" tabindex="-1">Sincronización</h1>
-          <p class="lede">Vista previa calculada por el planificador real de SYNCODE: muestra qué cambiaría en tu configuración global. No escribe archivos.</p>
+          <p class="lede">Vista previa calculada por el planificador real de SYNCODE: muestra qué cambiaría en tu configuración global. La vista previa no escribe archivos; aplicar requiere tu confirmación explícita.</p>
         </div>
       </div>
 
@@ -76,11 +76,24 @@
       <div id="sync-result" aria-busy="false">
         <section class="panel intro">
           <h2>Antes de sincronizar, revisa</h2>
-          <p>Elige el objetivo y el alcance y genera la vista previa. Verás cada archivo que se crearía o actualizaría, agrupado por cliente. Esta versión no aplica cambios.</p>
+          <p>Elige el objetivo y el alcance y genera la vista previa. Verás cada archivo que se crearía o actualizaría, agrupado por cliente. Después podrás aplicar exactamente ese lote, tras confirmarlo.</p>
         </section>
       </div>
     </section>
   </main>
+
+  <dialog id="apply-dialog" aria-labelledby="apply-dialog-title" aria-describedby="apply-dialog-scope">
+    <form method="dialog" class="dialog-body">
+      <h2 id="apply-dialog-title">¿Aplicar estos cambios?</h2>
+      <p id="apply-dialog-scope"></p>
+      <ul id="apply-dialog-counts" class="counts"></ul>
+      <ul id="apply-dialog-warnings" class="warnings"></ul>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" autofocus>Cancelar</button>
+        <button type="submit" value="apply" class="primary" id="apply-confirm">Aplicar</button>
+      </div>
+    </form>
+  </dialog>
 
   <footer class="appfoot" id="foot">SYNCODE Desktop</footer>
 </body>

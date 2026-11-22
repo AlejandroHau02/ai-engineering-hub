@@ -25,9 +25,16 @@ param(
   [ValidateSet('diagnostico', 'sincronizacion')] [string] $Screen = 'diagnostico',
   # Run the app with USERPROFILE pointing at this directory (evidence against
   # a disposable home; the real profile is never involved).
-  [string] $HomeOverride
+  [string] $HomeOverride,
+  # With -Screen sincronizacion: after the preview, press "Aplicar N cambios…"
+  # and confirm in the dialog. Refused without -HomeOverride, so the real
+  # profile can never be written by this script.
+  [switch] $Apply
 )
 $ErrorActionPreference = 'Stop'
+if ($Apply -and (-not $HomeOverride -or $Screen -ne 'sincronizacion')) {
+  throw '-Apply requires -Screen sincronizacion and -HomeOverride (a disposable home)'
+}
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
@@ -112,11 +119,35 @@ function Invoke-Named([string] $Text) {
   if (-not $node) { throw "UI element '$Text' not found" }
   $node.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
+function Invoke-Matching([string] $Pattern, [int] $Seconds = 40) {
+  $until = (Get-Date).AddSeconds($Seconds)
+  while ((Get-Date) -lt $until) {
+    $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+      [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($node in $all) {
+      $name = $node.Current.Name
+      if ($name -and $name -match $Pattern -and
+          $node.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button) {
+        $node.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        return $name
+      }
+    }
+    Start-Sleep -Milliseconds 400
+  }
+  throw "No button matching '$Pattern'"
+}
 
+$applied = $null
 if ($Screen -eq 'sincronizacion') {
   Invoke-Named 'Sincronización'
   Start-Sleep -Milliseconds 800
   Invoke-Named 'Generar vista previa'
+  if ($Apply) {
+    $applied = @()
+    $applied += Invoke-Matching '^Aplicar \d+ cambios?…$'
+    Start-Sleep -Milliseconds 800
+    $applied += Invoke-Matching '^Aplicar \d+ cambios?$'
+  }
 }
 $found = $null
 if ($ExpectText) {
@@ -152,6 +183,7 @@ $expectOk = (-not $ExpectText) -or [bool]$found
   isolated = [bool]$Isolated
   screen = $Screen
   homeOverride = [bool]$HomeOverride
+  applyButtons = $applied
   poisonImported = $poisoned
   expectText = $ExpectText
   foundText = $found
