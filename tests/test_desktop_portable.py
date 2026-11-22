@@ -83,7 +83,10 @@ class PortableTests(unittest.TestCase):
         self._write_manifest()
         with self.assertRaises(package_portable.PackageError):
             self._build()
-        self.assertTrue(self._build(allow_dirty=True).is_file())
+        dirty = self._build(allow_dirty=True)
+        with self.assertRaisesRegex(package_portable.PackageError, "uncommitted"):
+            package_portable.verify(dirty)
+        self.assertEqual(package_portable.verify(dirty, allow_dirty=True)["root"], dirty.stem)
 
     def test_refuses_undeclared_or_altered_files(self):
         planted = self.res / "python" / "version.dll"
@@ -122,6 +125,7 @@ class PortableTests(unittest.TestCase):
             "missing entry": lambda e: [x for x in e if not x[0].endswith("sync.py")],
             "two roots": lambda e: e + [("other/readme.txt", b"x")],
             "altered core": lambda e: [(n, b"changed" if n.endswith("doctor.py") else d) for n, d in e],
+            "duplicate entry": lambda e: [(f"{root}/python/python312.dll", b"evil")] + e,
         }
         for label, mutate in cases.items():
             with self.subTest(label):

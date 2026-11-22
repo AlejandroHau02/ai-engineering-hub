@@ -95,9 +95,11 @@ pub enum PreviewOutcome {
         changes: Vec<PlannedChange>,
         /// Abbreviated, display-only identifier; not an authorization.
         plan_id: String,
-        /// A transaction workspace appeared while previewing (another tool
-        /// may be applying): the preview may not reflect the final state.
-        concurrent_transaction: bool,
+        /// `transaction.recoveryRequired` as observed on disk at the end:
+        /// `true` means a transaction workspace appeared while previewing
+        /// (another tool may be applying); `None` means it could not be
+        /// determined. Either way the UI warns instead of trusting the plan.
+        recovery_required: Option<bool>,
     },
     /// The planner stopped on a controlled condition; nothing was written.
     #[serde(rename_all = "camelCase")]
@@ -229,7 +231,7 @@ pub fn classify(options: &PreviewOptions, exited: &Exited) -> PreviewOutcome {
                 home: home.to_string(),
                 changes,
                 plan_id: format!("syncode-plan-v1 · {}", &hex[..12]),
-                concurrent_transaction: recovery_required == Some(true),
+                recovery_required,
             }
         }
         _ => {
@@ -441,7 +443,7 @@ mod tests {
         let PreviewOutcome::Plan {
             ref changes,
             ref plan_id,
-            concurrent_transaction,
+            recovery_required,
             ..
         } = outcome
         else {
@@ -450,7 +452,7 @@ mod tests {
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[1].component_name.as_deref(), Some("ux-ui"));
         assert_eq!(plan_id, "syncode-plan-v1 · bbbbbbbbbbbb");
-        assert!(!concurrent_transaction);
+        assert_eq!(recovery_required, Some(false));
         let wire = serde_json::to_string(&outcome).unwrap();
         for leaked in ["sha256", "aaaaaaaa", "events", "BACKUP", &"b".repeat(13)] {
             assert!(!wire.contains(leaked), "{leaked} leaked: {wire}");
@@ -595,16 +597,17 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_transaction_is_flagged() {
-        let mut body = response("planned", sample_changes());
-        body["transaction"]["recoveryRequired"] = json!(true);
-        assert!(matches!(
-            classify(&both(), &exited(0, &body)),
-            PreviewOutcome::Plan {
-                concurrent_transaction: true,
-                ..
+    fn recovery_required_is_passed_through() {
+        for (raw, expected) in [(json!(true), Some(true)), (Value::Null, None)] {
+            let mut body = response("planned", sample_changes());
+            body["transaction"]["recoveryRequired"] = raw;
+            match classify(&both(), &exited(0, &body)) {
+                PreviewOutcome::Plan {
+                    recovery_required, ..
+                } => assert_eq!(recovery_required, expected),
+                other => panic!("{other:?}"),
             }
-        ));
+        }
     }
 
     #[test]

@@ -98,6 +98,9 @@
     sincronizacion: { title: "Sincronización", runId: 0, running: false, current: null, lastGood: null },
   };
   let active = "diagnostico";
+  // Commands are serialized: the core runs one at a time, so a request made
+  // while the other screen is busy waits for its turn instead of failing.
+  let queue = Promise.resolve();
 
   // ---- DOM helpers ------------------------------------------------------------
   function el(tag, attrs, ...children) {
@@ -483,9 +486,11 @@
         el("p", { class: "sub", text: `Alcance: ${scopeText(o.options)}.` })));
     }
 
-    if (o.concurrentTransaction) {
+    if (o.recoveryRequired === true) {
       frag.append(el("section", { class: "panel notice-panel level-warn" }, icon("warn"),
         el("p", { text: "Apareció una transacción de instalación mientras se calculaba la vista previa (otra herramienta puede estar aplicando cambios). Esta vista previa puede no reflejar el estado final: revisa Diagnóstico." })));
+    } else if (o.recoveryRequired !== false) {
+      frag.append(el("p", { class: "note", text: "No se pudo comprobar si había una transacción en curso al terminar la vista previa." }));
     }
 
     if (o.changes.length) {
@@ -520,7 +525,7 @@
       }
     }
 
-    const technical = el("details", { class: "technical", "data-plan-details": true },
+    const technical = nested ? null : el("details", { class: "technical", "data-plan-details": true },
       el("summary", { text: "Detalle técnico" }),
       el("dl", {},
         el("dt", { text: "Identificador del plan (técnico)" }),
@@ -531,7 +536,7 @@
         el("dd", {}, el("code", { text: cliEquivalent(o.options) })),
         el("dt", { text: "Home analizado" }),
         pathText("dd", {}, o.home)));
-    frag.append(technical);
+    if (technical) frag.append(technical);
     frag.append(el("p", { class: "note" },
       `Generada a las ${formatTime(at)}. Es una instantánea: los archivos pueden cambiar después. `,
       "Esta versión no aplica cambios; el CLI recalcula el plan al ejecutarse."));
@@ -674,19 +679,35 @@
     button.setAttribute("aria-disabled", "true");
     result.setAttribute("aria-busy", "true");
     announce(name, `${spec.busy}…`);
-    $(`${spec.prefix}-meta`).textContent = `${spec.busy}…`;
     if (state.current || name !== "diagnostico") result.replaceChildren(loadingPanel(spec.busy));
-    let run;
+    const args = spec.args(); // options as chosen when the user asked
+    const other = Object.keys(screens).find((key) => key !== name && screens[key].running);
+    if (other) $(`${spec.prefix}-meta`).textContent = `En espera: ${screens[other].title.toLowerCase()} en curso…`;
     const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-    try {
+    const call = queue.then(async () => {
+      $(`${spec.prefix}-meta`).textContent = `${spec.busy}…`;
       if (typeof invoke !== "function") throw new Error("bridge");
-      run = await invoke(spec.command, spec.args());
+      return invoke(spec.command, args);
+    });
+    queue = call.catch(() => undefined);
+    let run;
+    try {
+      run = await call;
     } catch (error) {
       run = { outcome: { kind: "transport", code: "bridge", detail: String((error && error.message) || error), exitCode: null } };
     }
     state.running = false;
     button.removeAttribute("aria-disabled");
     if (id !== state.runId) return; // a newer run superseded this one
+    if (run.outcome.kind === "transport" && run.outcome.code === "busy") {
+      // Not a result: keep whatever was shown before and say why.
+      if (state.current) paintScreen(name);
+      else result.replaceChildren(failurePanel(name, run.outcome, new Date(), (b) => runScreen(name, b)));
+      result.setAttribute("aria-busy", "false");
+      $(`${spec.prefix}-meta`).textContent = "Otra operación estaba en curso; vuelve a intentarlo.";
+      announce(name, "Otra operación estaba en curso; no se ejecutó.");
+      return;
+    }
     const at = new Date();
     if (typeof run.userHome === "string") homes.add(run.userHome);
     if (run.outcome.kind === "report" && typeof run.outcome.report.home === "string") homes.add(run.outcome.report.home);

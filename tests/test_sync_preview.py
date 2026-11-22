@@ -96,7 +96,9 @@ HARNESS = textwrap.dedent(r"""
     sys.path.insert(0, sys.argv[1])
     home, argv = sys.argv[2], json.loads(sys.argv[3])
     violations = []
-    WRITE_FLAGS = 0x1 | 0x2 | 0x40 | 0x200 | 0x400  # O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND
+    import os
+    WRITE_FLAGS = (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+                   | os.O_EXCL)
 
     def hook(event, args):
         if event == "open":
@@ -108,7 +110,9 @@ HARNESS = textwrap.dedent(r"""
                        "os.symlink", "os.link", "os.truncate", "os.chmod", "os.utime",
                        "shutil.copyfile", "shutil.move", "shutil.rmtree",
                        "socket.connect", "socket.getaddrinfo", "subprocess.Popen",
-                       "urllib.Request"):
+                       "urllib.Request", "os.system", "os.exec", "os.spawn",
+                       "os.posix_spawn", "os.startfile", "os.chown", "os.kill",
+                       "ctypes.dlopen", "winreg.SetValue", "winreg.CreateKey"):
             violations.append((event, str(args[0]) if args else ""))
 
     import io, contextlib

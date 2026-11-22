@@ -1,3 +1,5 @@
+[hidden] { display: none !important; }
+
 /* SYNCODE Desktop — Diagnóstico. Tokens first; light/dark follow Windows. */
 :root {
   color-scheme: light dark;

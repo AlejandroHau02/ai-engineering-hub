@@ -148,15 +148,19 @@ def build(exe: Path, resources: Path, out_dir: Path, allow_dirty: bool = False,
             info.external_attr = 0o100644 << 16
             data = sources[rel] if isinstance(sources[rel], bytes) else sources[rel].read_bytes()
             bundle.writestr(info, data)
+    verify(tmp, allow_dirty=allow_dirty)  # never publish an unverified name
     tmp.replace(target)
-    verify(target)
     (out_dir / "SHA256SUMS").write_text(f"{_sha256(target.read_bytes())}  {zip_name}\n",
                                         encoding="ascii", newline="\n")
     return target
 
 
-def verify(archive: Path) -> dict:
-    """Check the ZIP listing is exactly the declared set under one root folder."""
+def verify(archive: Path, allow_dirty: bool = False) -> dict:
+    """Check the ZIP listing is exactly the declared set under one root folder.
+
+    Duplicate entries are rejected (extractors disagree on which copy wins)
+    and so is a bundle staged from uncommitted sources unless allowed.
+    """
     with zipfile.ZipFile(archive) as bundle:
         infos = bundle.infolist()
         if not infos or len(infos) > MAX_ENTRIES:
@@ -170,7 +174,11 @@ def verify(archive: Path) -> dict:
             if info.is_dir() or not _safe(info.filename):
                 raise PackageError(f"Unexpected entry: {info.filename!r}")
             names.add(info.filename[len(root) + 1:])
+        if len(names) != len(infos):
+            raise PackageError("Duplicate entries in the archive")
         manifest = json.loads(bundle.read(f"{root}/syncode/BUNDLE_MANIFEST.json"))
+        if (manifest.get("source") or {}).get("dirty") is not False and not allow_dirty:
+            raise PackageError("Archive was built from uncommitted sources")
         expected = expected_entries(manifest)
         if names != expected:
             raise PackageError(f"Listing mismatch: extra={sorted(names - expected)} "
@@ -195,13 +203,14 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--allow-dirty", action="store_true", help="development only")
     v = sub.add_parser("verify")
     v.add_argument("archive", type=Path)
+    v.add_argument("--allow-dirty", action="store_true", help="development only")
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
             target = build(args.exe, args.resources, args.out, args.allow_dirty)
-            print(json.dumps({"zip": str(target), **verify(target)}))
+            print(json.dumps({"zip": str(target), **verify(target, args.allow_dirty)}))
         else:
-            print(json.dumps(verify(args.archive)))
+            print(json.dumps(verify(args.archive, args.allow_dirty)))
     except (PackageError, OSError, zipfile.BadZipFile, KeyError, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

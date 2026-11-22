@@ -530,7 +530,9 @@ pub mod testing {
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let entry = entry.unwrap();
-                let meta = entry.metadata().unwrap();
+                // fs::metadata opens the file: DirEntry metadata on Windows comes
+                // from the directory index, which NTFS updates lazily.
+                let meta = std::fs::metadata(entry.path()).unwrap();
                 let rel = entry.path().strip_prefix(root).unwrap().to_path_buf();
                 if meta.is_dir() {
                     stack.push(entry.path());
