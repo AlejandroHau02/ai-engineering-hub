@@ -26,6 +26,7 @@ ERROR_CODES = frozenset({
     "skill-modified",
     "destination-conflict",
     "destination-changed",
+    "stale-plan",
     "unknown-component",
     "transaction-pending",
     "lock-busy",

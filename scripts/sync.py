@@ -23,8 +23,10 @@ from cli_contract import (
     error_object, resolve_home, wants_json,
 )
 from path_safety import is_link_or_reparse
+import plan_identity
 from transaction import (
-    TransactionError, TransactionReport, WORK_DIR, apply_transaction, recover,
+    TransactionError, TransactionReport, WORK_DIR, apply_planned_transaction,
+    apply_transaction, recover,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +42,19 @@ class Change:
     content: str
     kind: str
     expected: str | None = None
+    # SHA-256 of the destination's raw bytes when planned (None if absent).
+    old_sha256: str | None = None
+
+
+def _read_existing(path: Path) -> tuple[str, str]:
+    """Read once: text exactly as ``read_text`` returns it, plus raw-bytes SHA-256.
+
+    The text keeps universal-newline semantics for merging; the raw hash binds
+    the plan to the exact bytes (a CRLF-only edit is a change).
+    """
+    raw = path.read_bytes()
+    text = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8").read()
+    return text, hashlib.sha256(raw).hexdigest()
 
 
 def ensure_safe(path: Path, home: Path) -> None:
@@ -88,22 +103,28 @@ def build_plan(
     home: Path, targets: tuple[str, ...], upgrade_skills: bool = False,
     include_specialists: bool = False,
     include_approved_skills: bool = False,
+    approved: list[tuple[Path, str]] | None = None,
 ) -> list[Change]:
+    """Deterministic plan. ``approved`` lets a caller pass pre-verified
+    approved-skill candidates so no network request happens under the lock."""
     changes: list[Change] = []
     for target in targets:
         config = home / (".claude/CLAUDE.md" if target == "claude" else ".codex/AGENTS.md")
         ensure_safe(config, home)
-        existing = config.read_text(encoding="utf-8") if config.exists() else ""
+        existing, old_sha = _read_existing(config) if config.exists() else ("", None)
         updated = merge_block(existing, global_block(target))
         if updated != existing:
-            changes.append(Change(config, updated, "UPDATE" if config.exists() else "CREATE", existing if config.exists() else None))
+            changes.append(Change(
+                config, updated, "UPDATE" if old_sha is not None else "CREATE",
+                existing if old_sha is not None else None, old_sha,
+            ))
         root = home / (".claude/skills" if target == "claude" else ".agents/skills")
         for skill in SKILLS:
             dest = root / skill / "SKILL.md"
             ensure_safe(dest, home)
             new_content = (ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
             if dest.exists():
-                existing_skill = dest.read_text(encoding="utf-8")
+                existing_skill, skill_sha = _read_existing(dest)
                 if existing_skill == new_content:
                     continue
                 if not upgrade_skills:
@@ -119,7 +140,7 @@ def build_plan(
                         "manual review required (no files were written)",
                         code="skill-modified",
                     )
-                changes.append(Change(dest, new_content, "UPGRADE", existing_skill))
+                changes.append(Change(dest, new_content, "UPGRADE", existing_skill, skill_sha))
                 continue
             if dest.parent.exists():
                 # An already-existing skill directory may contain personal
@@ -147,7 +168,9 @@ def build_plan(
     if include_approved_skills:
         # Fetch and verify ALL approved sources before any local write; the
         # manifest remains empty until explicitly reviewed and approved.
-        for relative, approved_content in approved_candidates(targets):
+        if approved is None:
+            approved = approved_candidates(targets)
+        for relative, approved_content in approved:
             dest = home / relative
             ensure_safe(dest, home)
             if dest.parent.exists():
@@ -186,7 +209,10 @@ def verify_change(change: Change, home: Path) -> None:
             )
     elif (
         not change.path.exists()
-        or change.path.read_text(encoding="utf-8") != change.expected
+        or (change.old_sha256 is not None
+            and hashlib.sha256(change.path.read_bytes()).hexdigest() != change.old_sha256)
+        or (change.old_sha256 is None
+            and change.path.read_text(encoding="utf-8") != change.expected)
     ):
         raise SyncodeError(
             f"Destination changed since planning: {change.path}",
@@ -233,13 +259,108 @@ def _workspace_present(home: Path) -> bool | None:
         return None
 
 
+def _flags(args) -> dict:
+    return {"upgradeSkills": args.upgrade_skills, "specialists": args.specialists,
+            "approvedSkills": args.approved_skills}
+
+
+def plan_fingerprint(home: Path, targets: tuple[str, ...], flags: dict,
+                     changes: list[Change]) -> str:
+    """Identity of exactly this batch; the single function used by dry-run and apply."""
+    ops = [{"kind": c.kind, "path": c.path.relative_to(home).as_posix(),
+            "newSha256": hashlib.sha256(c.content.encode("utf-8")).hexdigest(),
+            "oldSha256": c.old_sha256}
+           for c in changes]
+    return plan_identity.fingerprint(home, targets, flags, ops)
+
+
+def _print_plan(changes: list[Change], apply: bool) -> None:
+    for change in changes:
+        mode = "APPLY" if apply else "DRY-RUN"
+        digest = (f" sha256={hashlib.sha256(change.content.encode('utf-8')).hexdigest()}"
+                  if change.kind == "APPROVED-CREATE" else "")
+        print(f"{mode} {change.kind} {change.path}{digest}")
+
+
+def _apply_bound(args, home: Path, targets: tuple[str, ...], report: TransactionReport,
+                 planned: list[Change], plan_info: dict) -> str:
+    """Apply only the reviewed batch identified by ``--expect-plan``.
+
+    1. Network-dependent inputs (approved skills) are fetched and verified
+       BEFORE the lock, once, and reused.
+    2. Best-effort early check outside the lock: only a clean rebuild that
+       differs rejects (``stale-plan``) without creating the lock file. It is
+       skipped when a transaction workspace exists and its errors are ignored,
+       because another process may be mid-transaction; the locked check below
+       is authoritative (``lock-busy``, ``transaction-pending``, ...).
+    3. Under the exclusive lock (after the pending-transaction check) the plan
+       is rebuilt from disk and its fingerprint compared again; only an exact
+       match proceeds to the transactional writes.
+    A rebuild that raises keeps its specific code; a rebuild that succeeds but
+    differs is ``stale-plan``. Either way nothing is written.
+    """
+    expected = args.expect_plan
+    flags = _flags(args)
+    approved = approved_candidates(targets) if args.approved_skills else None
+
+    def bound_plan() -> list[Change]:
+        # Never report a previous build's plan if this rebuild fails.
+        planned[:] = []
+        plan_info.update(fingerprint=None, matched=None)
+        changes = build_plan(
+            home, targets,
+            upgrade_skills=args.upgrade_skills,
+            include_specialists=args.specialists,
+            include_approved_skills=args.approved_skills,
+            approved=approved,
+        )
+        planned[:] = changes
+        current = plan_fingerprint(home, targets, flags, changes)
+        plan_info.update(fingerprint=current, matched=current == expected)
+        if current != expected:
+            raise SyncodeError(
+                "Plan changed since it was reviewed; no files were written. "
+                "Review the current plan and confirm it again before applying.",
+                code="stale-plan",
+            )
+        return changes
+
+    if not _workspace_present(home):
+        try:
+            bound_plan()  # early rejection, no lock file created
+        except SyncodeError as early:
+            if early.code == "stale-plan":
+                raise
+            # Possibly another process mid-transaction: decide under the lock.
+        except (OSError, UnicodeError, ValueError):
+            pass
+
+    def locked_plan() -> list[Change]:
+        changes = bound_plan()
+        if changes:
+            _print_plan(changes, apply=True)
+        return changes
+
+    changes = apply_planned_transaction(locked_plan, home, verify_change, write_with_backup,
+                                        ensure_safe, report=report)
+    if not changes:
+        print("NO CHANGES")
+        return "unchanged"
+    print(f"Applied {len(changes)} file change(s) transactionally.")
+    return "applied"
+
+
 def _run_operation(args, home: Path, targets: tuple[str, ...], report: TransactionReport,
-                   planned: list[Change]) -> str:
+                   planned: list[Change], plan_info: dict | None = None) -> str:
     """Keep legacy text output and the safe sync workflow unchanged.
 
     ``planned`` receives the plan before any write so a failed apply can still
-    report what was attempted; ``report.outcome`` describes the destinations.
+    report what was attempted; ``report.outcome`` describes the destinations;
+    ``plan_info`` receives the plan identity.
     """
+    plan_info = {} if plan_info is None else plan_info
+    if getattr(args, "expect_plan", None) is not None:
+        return _apply_bound(args, home, targets, report, planned, plan_info)
     if args.recover:
         # Until recovery finishes, a preserved journal means the destinations
         # may be partially applied.
@@ -263,14 +384,11 @@ def _run_operation(args, home: Path, targets: tuple[str, ...], report: Transacti
         include_approved_skills=args.approved_skills,
     )
     planned[:] = changes
+    plan_info["fingerprint"] = plan_fingerprint(home, targets, _flags(args), changes)
     if not changes:
         print("NO CHANGES")
         return "unchanged"
-    for change in changes:
-        mode = "APPLY" if args.apply else "DRY-RUN"
-        digest = (f" sha256={hashlib.sha256(change.content.encode('utf-8')).hexdigest()}"
-                  if change.kind == "APPROVED-CREATE" else "")
-        print(f"{mode} {change.kind} {change.path}{digest}")
+    _print_plan(changes, apply=args.apply)
     if args.apply:
         apply_transaction(changes, home, verify_change, write_with_backup, ensure_safe,
                           report=report)
@@ -298,6 +416,11 @@ def _parser(json_errors: bool) -> ContractArgumentParser:
         "--approved-skills", action="store_true",
         help="Include manually approved standalone third-party skills; dry-run unless --apply",
     )
+    parser.add_argument(
+        "--expect-plan", metavar="FINGERPRINT", default=None,
+        help="With --apply: apply only if the current plan has exactly this fingerprint "
+             "(from a reviewed dry-run); otherwise reject with stale-plan and write nothing",
+    )
     # Resolved inside the error-handled section so an unusable home is reported
     # through the contract instead of a traceback.
     parser.add_argument("--home", type=Path, default=None,
@@ -315,12 +438,22 @@ def main(argv: list[str] | None = None) -> int:
     targets: tuple[str, ...] = ()
     planned: list[Change] = []
     report = TransactionReport()
+    plan_info: dict = {"fingerprint": None, "expected": None, "matched": None}
     status = "error"
     error: BaseException | None = None
     buffer = io.StringIO()
     try:
-        args = _parser(json_mode).parse_args(argv)
+        parser = _parser(json_mode)
+        args = parser.parse_args(argv)
         json_mode = args.format == "json"
+        if args.expect_plan is not None:
+            # Usage errors: checked before any filesystem access.
+            if not args.apply:
+                parser.error("--expect-plan requires --apply")
+            if not plan_identity.is_well_formed(args.expect_plan):
+                parser.error("--expect-plan must be a plan fingerprint "
+                             f"({plan_identity.PREFIX}<64 hex>)")
+            plan_info["expected"] = args.expect_plan
         targets = ("claude", "codex") if args.target == "both" else (args.target,)
         home = resolve_home(args.home)
         # Capture any installer/backups progress so JSON stdout is one complete
@@ -328,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         # output is unchanged for CLI users and existing scripts.
         context = redirect_stdout(buffer) if json_mode else nullcontext()
         with context:
-            status = _run_operation(args, home, targets, report, planned)
+            status = _run_operation(args, home, targets, report, planned, plan_info)
     except (OSError, UnicodeError, ValueError, ArgumentContractError) as failure:
         error = failure
         if not json_mode:
@@ -362,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
                 "outcome": report.outcome,
                 "recoveryRequired": None if home is None else _workspace_present(home),
             },
+            plan={"algorithm": plan_identity.ALGORITHM, **plan_info},
             error=None if error is None else error_object(error),
         ))
     if isinstance(error, KeyboardInterrupt):

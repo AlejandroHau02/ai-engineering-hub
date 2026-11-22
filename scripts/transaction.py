@@ -548,6 +548,37 @@ def apply_transaction(changes, home: Path, verify_change, write_change, ensure_s
         _apply_transaction_locked(changes, home, verify_change, write_change, ensure_safe, report)
 
 
+def apply_planned_transaction(plan, home: Path, verify_change, write_change, ensure_safe,
+                              report: TransactionReport | None = None):
+    """Build and apply a batch under ONE acquisition of the exclusive home lock.
+
+    ``plan()`` runs while the lock is held and after the pending-transaction
+    check, before the workspace is created or any destination is touched; it
+    returns the changes to apply or raises to reject (e.g. a stale bound plan).
+    The lock is not re-entrant, so callers must not take it themselves.
+    Returns the changes that were applied (possibly empty).
+    """
+    report = report if report is not None else TransactionReport()
+    report.outcome = "not-started"
+    with exclusive_home_lock(home, ensure_safe):
+        directory = home / WORK_DIR
+        # Validate parents through the journal path: ensure_safe(directory)
+        # would reject an existing workspace directory as "not a regular file"
+        # (unsafe-path) instead of reporting the pending transaction.
+        ensure_safe(directory / JOURNAL, home)
+        if directory.exists() or is_link_or_reparse(directory):
+            raise TransactionError(
+                "Unfinished installation transaction; inspect and run sync.py --recover "
+                "before planning new changes",
+                code="transaction-pending",
+            )
+        changes = plan()
+        if changes:
+            _apply_transaction_locked(changes, home, verify_change, write_change,
+                                      ensure_safe, report)
+        return changes
+
+
 def _apply_transaction_locked(changes, home: Path, verify_change, write_change, ensure_safe,
                               report: TransactionReport | None = None):
     """Stage preimages first; write, then commit or revert the entire batch."""
@@ -558,8 +589,8 @@ def _apply_transaction_locked(changes, home: Path, verify_change, write_change, 
         raise TransactionError(f"Refusing transaction of more than {MAX_FILES} files",
                                code="transaction-limit")
     directory = home / WORK_DIR
-    ensure_safe(directory, home)
-    if directory.exists():
+    ensure_safe(directory / JOURNAL, home)
+    if directory.exists() or is_link_or_reparse(directory):
         raise TransactionError("Unfinished transaction exists; run sync.py --recover",
                                code="transaction-pending")
 
@@ -581,6 +612,15 @@ def _apply_transaction_locked(changes, home: Path, verify_change, write_change, 
                     code="unsafe-path",
                 )
             raw = change.path.read_bytes() if change.path.exists() else None
+            # Bind the snapshot to the bytes the plan was built from: a change
+            # between the last verify and this read must not be journaled as
+            # the "original" (and later restored or backed up as such).
+            planned_old = getattr(change, "old_sha256", None)
+            if planned_old is not None and (raw is None or _sha(raw) != planned_old):
+                raise TransactionError(
+                    f"Destination changed since planning: {change.path}",
+                    code="destination-changed",
+                )
             new_bytes = change.content.encode("utf-8")
             before = _snapshot(directory, index, raw) if raw is not None else None
             backup = (f"{change.path.name}.bak."
