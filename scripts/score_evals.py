@@ -25,6 +25,14 @@ WEIGHTS: dict[str, dict[str, int]] = {
         "findings": 40, "priority": 20,
         "evidence": 20, "signal": 20,
     },
+    "E05": {
+        "operation_authorization": 35, "client_boundary": 20,
+        "minimal_fix": 25, "negative_test": 20,
+    },
+    "E08": {
+        "threat_model": 25, "findings": 35,
+        "evidence": 25, "remediation": 15,
+    },
 }
 
 
@@ -33,7 +41,7 @@ def evaluate(card: object) -> dict[str, object]:
         raise ValueError("Scorecard must contain a JSON object")
     scenario = card.get("scenario")
     if not isinstance(scenario, str) or scenario not in WEIGHTS:
-        raise ValueError("Unknown scenario; expected E01, E02, E03 or E04")
+        raise ValueError("Unknown scenario; expected " + ", ".join(WEIGHTS))
     agent = card.get("agent")
     if not isinstance(agent, str) or not agent.strip():
         raise ValueError("agent must be a non-empty string")
