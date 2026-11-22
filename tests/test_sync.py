@@ -33,8 +33,8 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ai-engineering-hub:start", (self.home / ".claude/CLAUDE.md").read_text())
         self.assertIn("ai-engineering-hub:start", (self.home / ".codex/AGENTS.md").read_text())
-        self.assertEqual(len(list((self.home / ".claude/skills").glob("*/SKILL.md"))), 4)
-        self.assertEqual(len(list((self.home / ".agents/skills").glob("*/SKILL.md"))), 4)
+        self.assertEqual(len(list((self.home / ".claude/skills").glob("*/SKILL.md"))), 5)
+        self.assertEqual(len(list((self.home / ".agents/skills").glob("*/SKILL.md"))), 5)
 
     def test_existing_instructions_preserved_and_backed_up(self):
         config = self.home / ".claude/CLAUDE.md"

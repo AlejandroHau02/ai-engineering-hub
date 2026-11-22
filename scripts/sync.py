@@ -22,7 +22,7 @@ from transaction import TransactionError, WORK_DIR, apply_transaction, recover
 ROOT = Path(__file__).resolve().parents[1]
 START = "<!-- ai-engineering-hub:start -->"
 END = "<!-- ai-engineering-hub:end -->"
-SKILLS = ("architecture-review", "ux-ui", "backend-engineering", "code-review")
+SKILLS = ("architecture-review", "ux-ui", "backend-engineering", "code-review", "application-security-audit")
 BASELINES = ROOT / "registry" / "baselines" / "v0.1"
 
 
@@ -105,6 +105,14 @@ def build_plan(
                     )
                 changes.append(Change(dest, new_content, "UPGRADE", existing_skill))
                 continue
+            if dest.parent.exists():
+                # An already-existing skill directory may contain personal
+                # assets or a different skill. Never blend Hub content into it
+                # merely because SKILL.md has not been created.
+                raise ValueError(
+                    f"First-party skill directory already exists: {dest.parent}; "
+                    "manual review required (no files were written)"
+                )
             changes.append(Change(dest, new_content, "CREATE"))
         if include_specialists:
             for relative, agent_content in files_for_target(target).items():
